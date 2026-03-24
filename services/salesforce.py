@@ -1,7 +1,7 @@
 import base64
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from simple_salesforce import Salesforce
 from config import SF_USERNAME, SF_PASSWORD, SF_SECURITY_TOKEN, SF_DOMAIN
 
@@ -260,3 +260,55 @@ def create_action_task(
     task_id = result["id"]
     logger.info("Created action Task %s: %s (due: %s)", task_id, description, due_date)
     return task_id
+
+
+def create_nno_log(contact: dict) -> tuple[str, str]:
+    """
+    Create a completed NNO call task and a follow-up 'Call back' task for the next day.
+    Returns (nno_task_id, follow_up_task_id).
+    """
+    sf = _get_sf()
+    today = datetime.now().strftime("%Y-%m-%d")
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Completed NNO task
+    nno_data = {
+        "Subject": "NNO",
+        "Type": "Call",
+        "TaskSubtype": "Call",
+        "Status": "Completed",
+        "Priority": "Normal",
+        "ActivityDate": today,
+    }
+
+    contact_id = contact.get("Id")
+    if contact_id:
+        nno_data["WhoId"] = contact_id
+
+    account_id = contact.get("AccountId")
+    if account_id:
+        nno_data["WhatId"] = account_id
+
+    result = sf.Task.create(nno_data)
+    nno_task_id = result["id"]
+    logger.info("Created NNO Task %s for %s", nno_task_id, contact.get("Name"))
+
+    # Follow-up task for next day
+    follow_up_data = {
+        "Subject": "Call back",
+        "Type": "Call",
+        "Status": "Open",
+        "Priority": "Normal",
+        "ActivityDate": tomorrow,
+    }
+
+    if contact_id:
+        follow_up_data["WhoId"] = contact_id
+    if account_id:
+        follow_up_data["WhatId"] = account_id
+
+    result = sf.Task.create(follow_up_data)
+    follow_up_id = result["id"]
+    logger.info("Created follow-up Task %s for %s (due: %s)", follow_up_id, contact.get("Name"), tomorrow)
+
+    return nno_task_id, follow_up_id

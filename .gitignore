@@ -5,3 +5,4 @@ __pycache__/
 logs/
 CallBridge/CallBridge.app/
 .claude/
+.venv/

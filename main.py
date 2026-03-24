@@ -13,6 +13,7 @@ from services.salesforce import (
     create_call_log,
     create_transcript_note,
     create_action_task,
+    create_nno_log,
 )
 
 # Logging setup
@@ -69,6 +70,38 @@ def contact_search(
         results = search_contacts(q)
         return {"results": results}
     return {"results": []}
+
+
+@app.post("/log-nno")
+async def log_nno(
+    salesforce_id: str = Form(...),
+    salesforce_type: str = Form(...),
+):
+    """
+    Log an NNO (Niet opgenomen). Creates a completed NNO task and a
+    follow-up 'Call back' task for the next day.
+    """
+    from services.salesforce import _get_sf
+
+    sf = _get_sf()
+    record = sf.query(
+        f"SELECT Id, Name, AccountId FROM {salesforce_type} WHERE Id = '{salesforce_id}'"
+    )["records"][0]
+    contact = {
+        "Id": record["Id"],
+        "Name": record["Name"],
+        "AccountId": record.get("AccountId"),
+    }
+
+    logger.info("Logging NNO for %s (%s/%s)", contact["Name"], salesforce_type, salesforce_id)
+    nno_id, follow_up_id = create_nno_log(contact)
+
+    return {
+        "status": "ok",
+        "nno_task_id": nno_id,
+        "follow_up_task_id": follow_up_id,
+        "contact_name": contact["Name"],
+    }
 
 
 @app.post("/process")

@@ -529,6 +529,50 @@ class SaveDialogViewModel: ObservableObject {
         appDelegate?.updateStatusIcon()
         appDelegate?.dismissDialog()
     }
+
+    func logNNO() {
+        guard let contact = selectedContact, let contactId = contact.id else { return }
+
+        isSending = true
+
+        // Delete the recording — no need to process audio for NNO
+        try? FileManager.default.removeItem(atPath: audioPath)
+
+        guard let url = URL(string: "\(appDelegate?.serverURL ?? "http://localhost:8765")/log-nno") else { return }
+
+        let boundary = UUID().uuidString
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 15
+
+        var body = Data()
+        func addField(_ name: String, _ value: String) {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+            body.append("\(value)\r\n".data(using: .utf8)!)
+        }
+        addField("salesforce_id", contactId)
+        addField("salesforce_type", contact.type)
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = body
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    NSLog("CallBridge: NNO error: %@", error.localizedDescription)
+                    self?.appDelegate?.showNotification(title: "CallBridge", message: "NNO fout: \(error.localizedDescription)")
+                } else {
+                    NSLog("CallBridge: NNO logged successfully")
+                    self?.appDelegate?.showNotification(title: "CallBridge", message: "NNO gelogd + follow-up aangemaakt")
+                }
+                self?.appDelegate?.state = .idle
+                self?.appDelegate?.updateStatusIcon()
+            }
+        }.resume()
+
+        appDelegate?.dismissDialog()
+    }
 }
 
 // MARK: - SwiftUI Views
@@ -644,6 +688,12 @@ struct SaveRecordingView: View {
                     viewModel.discard()
                 }
                 .keyboardShortcut(.escape)
+
+                Button("NNO") {
+                    viewModel.logNNO()
+                }
+                .disabled(viewModel.selectedContact == nil || viewModel.selectedContact?.id == nil || viewModel.isSending)
+                .buttonStyle(.bordered)
 
                 Spacer()
 
