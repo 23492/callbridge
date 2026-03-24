@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+*.log
+logs/
+CallBridge/CallBridge.app/
+.claude/
