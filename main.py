@@ -1,6 +1,10 @@
 import logging
 import os
 import tempfile
+import threading
+import uuid
+from collections import deque
+from datetime import datetime
 
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Form, Query
 from fastapi.staticfiles import StaticFiles
@@ -29,13 +33,108 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Call Logger", version="2.0.0")
 
+# Job tracking for /status endpoint
+_jobs_lock = threading.Lock()
+_processing_jobs: dict[str, dict] = {}
+_completed_jobs: deque = deque(maxlen=3)
+
+
+def _start_job(job_id: str):
+    with _jobs_lock:
+        _processing_jobs[job_id] = {"job_id": job_id, "contact_name": "Onbekend", "step": "starting"}
+
+
+def _update_job(job_id: str, **kwargs):
+    with _jobs_lock:
+        if job_id in _processing_jobs:
+            _processing_jobs[job_id].update(kwargs)
+
+
+def _complete_job(job_id: str, contact_name: str, contact_id: str, contact_type: str, task_id: str):
+    future_tasks = _fetch_future_tasks(contact_id)
+    with _jobs_lock:
+        _processing_jobs.pop(job_id, None)
+        _completed_jobs.appendleft({
+            "contact_name": contact_name,
+            "contact_id": contact_id,
+            "contact_type": contact_type,
+            "task_id": task_id,
+            "future_tasks": future_tasks,
+        })
+
+
+def _fetch_future_tasks(what_id: str) -> list[dict]:
+    """Fetch open future tasks for a given WhatId."""
+    if not what_id:
+        return []
+    try:
+        from services.salesforce import _get_sf
+        sf = _get_sf()
+        today = datetime.now().strftime("%Y-%m-%d")
+        results = sf.query(
+            f"SELECT Id, Subject, ActivityDate FROM Task "
+            f"WHERE WhatId = '{what_id}' AND ActivityDate >= {today} AND Status != 'Completed' "
+            f"ORDER BY ActivityDate ASC"
+        )
+        return [
+            {"task_id": r["Id"], "subject": r.get("Subject", ""), "activity_date": r.get("ActivityDate", "")}
+            for r in results["records"]
+        ]
+    except Exception as e:
+        logger.warning("Failed to fetch future tasks for %s: %s", what_id, e)
+        return []
+
+
+def _fail_job(job_id: str):
+    with _jobs_lock:
+        _processing_jobs.pop(job_id, None)
+
+
 # Serve dashboard static files
 app.mount("/dashboard", StaticFiles(directory="dashboard", html=True), name="dashboard")
+
+
+@app.on_event("startup")
+def seed_recent_calls():
+    """Load last 3 Auto Logger call tasks from Salesforce on startup."""
+    try:
+        from services.salesforce import _get_sf
+        sf = _get_sf()
+        results = sf.query(
+            "SELECT Id, WhatId, What.Name, What.Type "
+            "FROM Task WHERE (Log_Type__c = 'Sales Call' OR Subject = 'NNO') "
+            "ORDER BY CreatedDate DESC LIMIT 3"
+        )
+        for record in results["records"]:
+            what = record.get("What") or {}
+            contact_name = what.get("Name", "Onbekend")
+            contact_id = record.get("WhatId") or ""
+            contact_type = what.get("Type", "Account")
+            task_id = record["Id"]
+            future_tasks = _fetch_future_tasks(contact_id)
+            _completed_jobs.append({
+                "contact_name": contact_name,
+                "contact_id": contact_id,
+                "contact_type": contact_type,
+                "task_id": task_id,
+                "future_tasks": future_tasks,
+            })
+        logger.info("Seeded %d recent calls from Salesforce", len(results["records"]))
+    except Exception as e:
+        logger.warning("Failed to seed recent calls: %s", e)
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/status")
+def status():
+    with _jobs_lock:
+        processing = list(_processing_jobs.values())
+        completed = list(_completed_jobs)
+    return {"processing": processing, "completed": completed}
 
 
 @app.get("/contact-search")
@@ -96,6 +195,17 @@ async def log_nno(
     logger.info("Logging NNO for %s (%s/%s)", contact["Name"], salesforce_type, salesforce_id)
     nno_id, follow_up_id = create_nno_log(contact)
 
+    # NNO creates a follow-up task for tomorrow, so fetch future tasks
+    future_tasks = _fetch_future_tasks(salesforce_id)
+    with _jobs_lock:
+        _completed_jobs.appendleft({
+            "contact_name": contact["Name"],
+            "contact_id": salesforce_id,
+            "contact_type": salesforce_type,
+            "task_id": nno_id,
+            "future_tasks": future_tasks,
+        })
+
     return {
         "status": "ok",
         "nno_task_id": nno_id,
@@ -125,8 +235,11 @@ async def process_recording(
 
     logger.info("Received: %s, phone: %s, sf: %s/%s", audio.filename, phone_number, salesforce_type, salesforce_id)
 
+    job_id = str(uuid.uuid4())
+    _start_job(job_id)
     background_tasks.add_task(
         process_pipeline,
+        job_id,
         temp_path,
         phone_number=phone_number,
         direction=direction,
@@ -153,14 +266,17 @@ async def process_manual(
 
     logger.info("Manual upload: %s, phone: %s", audio.filename, phone_number)
 
+    job_id = str(uuid.uuid4())
+    _start_job(job_id)
     background_tasks.add_task(
-        process_pipeline, temp_path, phone_number=phone_number, direction=direction
+        process_pipeline, job_id, temp_path, phone_number=phone_number, direction=direction
     )
 
     return {"status": "processing", "file": audio.filename, "phone": phone_number}
 
 
 def process_pipeline(
+    job_id: str,
     audio_path: str,
     phone_number: str,
     direction: str = "Outbound",
@@ -173,6 +289,7 @@ def process_pipeline(
     """
     try:
         # 1. Find contact in Salesforce (or use provided ID)
+        resolved_type = salesforce_type or "Contact"
         if salesforce_id and salesforce_type:
             from simple_salesforce import Salesforce
             from services.salesforce import _get_sf
@@ -185,13 +302,18 @@ def process_pipeline(
                 "Name": record["Name"],
                 "AccountId": record.get("AccountId"),
             }
+            resolved_type = salesforce_type
             logger.info("Using provided Salesforce record: %s (%s)", contact["Name"], salesforce_type)
         else:
             contact = find_contact_by_phone(phone_number)
             if contact is None:
                 logger.error("No Salesforce contact found for %s. Skipping.", phone_number)
                 _notify_error(f"Geen contact gevonden voor {phone_number}")
+                _fail_job(job_id)
                 return
+            resolved_type = contact.get("attributes", {}).get("type", "Contact")
+
+        _update_job(job_id, contact_name=contact["Name"], step="transcribing")
 
         # 2. Transcribe audio via AssemblyAI
         logger.info("Transcribing audio for %s...", contact["Name"])
@@ -201,7 +323,10 @@ def process_pipeline(
         if not transcript.strip():
             logger.warning("Empty transcript for %s. Skipping.", contact["Name"])
             _notify_error(f"Leeg transcript voor {contact['Name']}")
+            _fail_job(job_id)
             return
+
+        _update_job(job_id, step="summarizing")
 
         # 3. Generate summary via Gemini
         logger.info("Generating summary...")
@@ -209,6 +334,8 @@ def process_pipeline(
 
         # 4. Get call duration from AssemblyAI response
         duration = result["audio_duration"]
+
+        _update_job(job_id, step="extracting_actions")
 
         # 5. Extract action items from summary
         follow_up_date = None
@@ -221,6 +348,8 @@ def process_pipeline(
             logger.info("Extracted %d action items (follow-up: %s)", len(actions), follow_up_date)
         except Exception as e:
             logger.warning("Action item extraction failed (non-fatal): %s", e)
+
+        _update_job(job_id, step="saving_to_salesforce")
 
         # 6. Create Call Log in Salesforce (with follow-up date if found)
         task_id = create_call_log(contact, summary, duration, direction, follow_up_date)
@@ -240,10 +369,12 @@ def process_pipeline(
         os.remove(audio_path)
 
         logger.info("Pipeline complete: %s (%s) -> Task %s", contact["Name"], phone_number, task_id)
+        _complete_job(job_id, contact["Name"], contact["Id"], resolved_type, task_id)
         _notify_success(contact["Name"])
 
     except Exception as e:
         logger.error("Pipeline error: %s", e, exc_info=True)
+        _fail_job(job_id)
         _notify_error(str(e))
 
 

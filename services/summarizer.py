@@ -193,7 +193,7 @@ def generate_summary(transcript: str) -> str:
     payload = {
         "contents": [{
             "parts": [{
-                "text": f"{SUMMARY_PROMPT}\n\n<transcript>\n{transcript}\n</transcript>"
+                "text": f"{SUMMARY_PROMPT}\n\nDe datum van vandaag is: {__import__('datetime').date.today().isoformat()}\n\n<transcript>\n{transcript}\n</transcript>"
             }]
         }],
         "generationConfig": {

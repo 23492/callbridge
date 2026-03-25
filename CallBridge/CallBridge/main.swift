@@ -2,6 +2,23 @@ import Cocoa
 import SwiftUI
 import Foundation
 
+// MARK: - Debug Logging
+
+let debugLogPath = "/tmp/callbridge_debug.log"
+
+func debugLog(_ message: String) {
+    let timestamp = ISO8601DateFormatter().string(from: Date())
+    let line = "[\(timestamp)] \(message)\n"
+    guard let data = line.data(using: .utf8) else { return }
+    if !FileManager.default.fileExists(atPath: debugLogPath) {
+        FileManager.default.createFile(atPath: debugLogPath, contents: nil)
+    }
+    guard let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: debugLogPath)) else { return }
+    handle.seekToEndOfFile()
+    handle.write(data)
+    try? handle.close()
+}
+
 // MARK: - Data Models
 
 struct ContactInfo: Codable, Identifiable, Hashable {
@@ -33,6 +50,70 @@ struct SearchResponse: Codable {
     let results: [ContactInfo]
 }
 
+// MARK: - Status Models
+
+struct ProcessingJob: Codable {
+    let job_id: String
+    let contact_name: String
+    let step: String
+
+    var stepLabel: String {
+        switch step {
+        case "starting": return "Starten..."
+        case "transcribing": return "Transcriberen..."
+        case "summarizing": return "Samenvatten..."
+        case "extracting_actions": return "Acties extraheren..."
+        case "saving_to_salesforce": return "Opslaan in Salesforce..."
+        default: return step
+        }
+    }
+}
+
+struct FutureTask: Codable {
+    let task_id: String
+    let subject: String
+    let activity_date: String
+
+    var taskURL: URL? {
+        URL(string: "https://welisa.lightning.force.com/lightning/r/Task/\(task_id)/view")
+    }
+
+    var subjectShort: String {
+        subject.count > 20 ? String(subject.prefix(20)) + "…" : subject
+    }
+
+    var dateFormatted: String {
+        let fmtIn = DateFormatter()
+        fmtIn.dateFormat = "yyyy-MM-dd"
+        let fmtOut = DateFormatter()
+        fmtOut.dateFormat = "dd-MM-yy"
+        if let date = fmtIn.date(from: activity_date) {
+            return fmtOut.string(from: date)
+        }
+        return activity_date
+    }
+}
+
+struct CompletedJob: Codable {
+    let contact_name: String
+    let contact_id: String
+    let contact_type: String
+    let task_id: String
+    let future_tasks: [FutureTask]?
+
+    var contactURL: URL? {
+        URL(string: "https://welisa.lightning.force.com/lightning/r/\(contact_type)/\(contact_id)/view")
+    }
+    var taskURL: URL? {
+        URL(string: "https://welisa.lightning.force.com/lightning/r/Task/\(task_id)/view")
+    }
+}
+
+struct StatusResponse: Codable {
+    let processing: [ProcessingJob]
+    let completed: [CompletedJob]
+}
+
 // MARK: - Call State Machine
 
 enum CallState {
@@ -55,20 +136,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var state: CallState = .idle
     var pollTimer: Timer?
     var dialogWindow: NSWindow?
+    var statusTimer: Timer?
+    var lastStatus: StatusResponse?
+    var serverReachable: Bool = true
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        debugLog("App launching, recordingsDir: \(recordingsDir), logPath: \(debugLogPath)")
+
         // Create recordings directory
         try? FileManager.default.createDirectory(atPath: recordingsDir, withIntermediateDirectories: true)
 
         // Setup menu bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateStatusIcon()
+        rebuildMenu()
 
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "CallBridge v2", action: nil, keyEquivalent: ""))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        statusItem.menu = menu
+        // Fetch status immediately, then poll every 5 seconds
+        fetchStatus()
+        statusTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.fetchStatus()
+        }
 
         // Register for URL events
         let em = NSAppleEventManager.shared()
@@ -96,6 +183,106 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.statusItem.button?.title = "⏳"
             }
         }
+    }
+
+    // MARK: - Status Polling & Menu
+
+    func fetchStatus() {
+        guard let url = URL(string: "\(serverURL)/status") else { return }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 3
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                if let error = error {
+                    debugLog("fetchStatus error: \(error.localizedDescription)")
+                    self.serverReachable = false
+                    self.lastStatus = nil
+                } else if let data = data,
+                          let status = try? JSONDecoder().decode(StatusResponse.self, from: data) {
+                    debugLog("fetchStatus OK — processing: \(status.processing.count), completed: \(status.completed.count)")
+                    self.serverReachable = true
+                    self.lastStatus = status
+                } else {
+                    let raw = String(data: data ?? Data(), encoding: .utf8) ?? "nil"
+                    debugLog("fetchStatus decode failed, data: \(raw)")
+                    self.serverReachable = false
+                    self.lastStatus = nil
+                }
+                self.rebuildMenu()
+            }
+        }.resume()
+    }
+
+    func rebuildMenu() {
+        let menu = NSMenu()
+        debugLog("rebuildMenu — reachable: \(serverReachable), processing: \(lastStatus?.processing.count ?? -1), completed: \(lastStatus?.completed.count ?? -1)")
+
+        // Header
+        let header = NSMenuItem(title: "CallBridge v2", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
+        menu.addItem(NSMenuItem.separator())
+
+        guard serverReachable else {
+            let item = NSMenuItem(title: "Server niet bereikbaar", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            menu.addItem(NSMenuItem.separator())
+            menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+            statusItem.menu = menu
+            return
+        }
+
+        let hasProcessing = !(lastStatus?.processing.isEmpty ?? true)
+        let hasCompleted = !(lastStatus?.completed.isEmpty ?? true)
+
+        if hasProcessing {
+            let procHeader = NSMenuItem(title: "⏳ Verwerken", action: nil, keyEquivalent: "")
+            procHeader.isEnabled = false
+            menu.addItem(procHeader)
+
+            for job in lastStatus!.processing {
+                let item = NSMenuItem(title: "  \(job.contact_name) — \(job.stepLabel)", action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                menu.addItem(item)
+            }
+            menu.addItem(NSMenuItem.separator())
+        }
+
+        if hasCompleted {
+            for job in lastStatus!.completed {
+                let contactItem = NSMenuItem(title: "  \(job.contact_name)", action: #selector(openURL(_:)), keyEquivalent: "")
+                contactItem.target = self
+                contactItem.representedObject = job.contactURL
+                menu.addItem(contactItem)
+
+                for ft in job.future_tasks ?? [] {
+                    let taskItem = NSMenuItem(title: "    ↳ \(ft.subjectShort) — \(ft.dateFormatted)", action: #selector(openURL(_:)), keyEquivalent: "")
+                    taskItem.target = self
+                    taskItem.representedObject = ft.taskURL
+                    menu.addItem(taskItem)
+                }
+            }
+            menu.addItem(NSMenuItem.separator())
+        }
+
+        if !hasProcessing && !hasCompleted {
+            let item = NSMenuItem(title: "Geen recente activiteit", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+            menu.addItem(NSMenuItem.separator())
+        }
+
+        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        statusItem.menu = menu
+    }
+
+    @objc func openURL(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - URL Handler
@@ -721,6 +908,7 @@ struct SaveRecordingView: View {
 
 // MARK: - App Entry Point
 
+debugLog("=== CallBridge starting ===")
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

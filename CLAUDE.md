@@ -29,8 +29,8 @@ Three-tier system: macOS app (Swift) → Python backend (FastAPI) → Salesforce
 # Build the Swift app
 cd CallBridge && swiftc -o CallBridge.app/Contents/MacOS/CallBridge CallBridge/main.swift -framework Cocoa -framework SwiftUI
 
-# Copy to Applications
-cp -R CallBridge/CallBridge.app /Applications/CallBridge.app
+# Deploy: kill running instance, remove old app, copy fresh (cp -R alone won't overwrite the binary)
+pkill -f "CallBridge.app"; sleep 1; rm -rf /Applications/CallBridge.app && cp -R CallBridge/CallBridge.app /Applications/CallBridge.app
 ```
 
 ## Auto-Start (LaunchAgents)
