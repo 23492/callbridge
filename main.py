@@ -184,7 +184,7 @@ async def log_nno(
 
     sf = _get_sf()
     record = sf.query(
-        f"SELECT Id, Name, AccountId FROM {salesforce_type} WHERE Id = '{salesforce_id}'"
+        f"SELECT Id, Name{', AccountId' if salesforce_type == 'Contact' else ''} FROM {salesforce_type} WHERE Id = '{salesforce_id}'"
     )["records"][0]
     contact = {
         "Id": record["Id"],
@@ -295,7 +295,7 @@ def process_pipeline(
             from services.salesforce import _get_sf
             sf = _get_sf()
             record = sf.query(
-                f"SELECT Id, Name, AccountId FROM {salesforce_type} WHERE Id = '{salesforce_id}'"
+                f"SELECT Id, Name{', AccountId' if salesforce_type == 'Contact' else ''} FROM {salesforce_type} WHERE Id = '{salesforce_id}'"
             )["records"][0]
             contact = {
                 "Id": record["Id"],
