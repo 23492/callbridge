@@ -1,3 +1,4 @@
+import time
 import requests
 import logging
 from config import GEMINI_API_KEY, GEMINI_MODEL
@@ -203,16 +204,19 @@ def generate_summary(transcript: str) -> str:
         }
     }
 
-    # Try up to 2 times (1 retry on server error)
-    for attempt in range(2):
+    # Retry up to 5 times with exponential backoff on server errors
+    max_retries = 5
+    for attempt in range(max_retries):
         response = requests.post(
             url,
             json=payload,
             headers={"x-goog-api-key": GEMINI_API_KEY},
         )
 
-        if response.status_code in (500, 503) and attempt == 0:
-            logger.warning("Gemini returned %s, retrying...", response.status_code)
+        if response.status_code in (500, 502, 503, 429) and attempt < max_retries - 1:
+            wait = 2 ** attempt * 5  # 5s, 10s, 20s, 40s
+            logger.warning("Gemini returned %s, retrying in %ds (attempt %d/%d)...", response.status_code, wait, attempt + 1, max_retries)
+            time.sleep(wait)
             continue
 
         response.raise_for_status()
@@ -285,17 +289,27 @@ def extract_action_items(summary: str) -> list[dict]:
         }
     }
 
-    response = requests.post(
-        url,
-        json=payload,
-        headers={"x-goog-api-key": GEMINI_API_KEY},
-    )
-    response.raise_for_status()
-    data = response.json()
+    # Retry up to 5 times with exponential backoff on server errors
+    max_retries = 5
+    for attempt in range(max_retries):
+        response = requests.post(
+            url,
+            json=payload,
+            headers={"x-goog-api-key": GEMINI_API_KEY},
+        )
 
-    parts = data["candidates"][0]["content"]["parts"]
-    text = parts[0]["text"]
+        if response.status_code in (500, 502, 503, 429) and attempt < max_retries - 1:
+            wait = 2 ** attempt * 5
+            logger.warning("Gemini returned %s on action extraction, retrying in %ds (attempt %d/%d)...", response.status_code, wait, attempt + 1, max_retries)
+            time.sleep(wait)
+            continue
 
-    actions = json.loads(text)
-    logger.info("Extracted %d action items", len(actions))
-    return actions
+        response.raise_for_status()
+        data = response.json()
+
+        parts = data["candidates"][0]["content"]["parts"]
+        text = parts[0]["text"]
+
+        actions = json.loads(text)
+        logger.info("Extracted %d action items", len(actions))
+        return actions
