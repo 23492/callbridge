@@ -1,6 +1,14 @@
 import Cocoa
 import SwiftUI
 import Foundation
+import CryptoKit
+import AVFoundation
+
+// MARK: - Version & Update Config
+
+let appVersion = "1.1.0"
+let updateManifestURL = "https://raw.githubusercontent.com/23492/auto-logger/main/callbridge-update.json"
+let updatePublicKey = "5gNrU3eLBgEa6DG4LqADeADKhPXo3amf52RlbP6bF3c="
 
 // MARK: - Debug Logging
 
@@ -114,6 +122,195 @@ struct StatusResponse: Codable {
     let completed: [CompletedJob]
 }
 
+// MARK: - Update Manifest
+
+struct UpdateManifest: Codable {
+    let version: String
+    let url: String
+    let signature: String
+    let notes: String?
+}
+
+// MARK: - Update Checker
+
+class UpdateChecker {
+    var availableVersion: String?
+    var availableManifest: UpdateManifest?
+    var isUpdating = false
+
+    func checkForUpdate(notify: Bool = false, callback: (() -> Void)? = nil) {
+        guard let url = URL(string: updateManifestURL) else { return }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+            guard let self = self, let data = data, error == nil,
+                  let manifest = try? JSONDecoder().decode(UpdateManifest.self, from: data) else {
+                debugLog("UpdateChecker: Failed to fetch manifest: \(error?.localizedDescription ?? "decode error")")
+                return
+            }
+
+            let comparison = manifest.version.compare(appVersion, options: .numeric)
+            if comparison == .orderedDescending {
+                debugLog("UpdateChecker: Update available: \(manifest.version) (current: \(appVersion))")
+                DispatchQueue.main.async {
+                    self.availableVersion = manifest.version
+                    self.availableManifest = manifest
+                    callback?()
+                }
+            } else {
+                debugLog("UpdateChecker: Up to date (\(appVersion))")
+                if notify {
+                    DispatchQueue.main.async {
+                        self.showNotification(title: "CallBridge", message: "Je hebt de nieuwste versie (v\(appVersion))")
+                    }
+                }
+                DispatchQueue.main.async { callback?() }
+            }
+        }.resume()
+    }
+
+    func downloadAndApply() {
+        guard let manifest = availableManifest, let downloadURL = URL(string: manifest.url) else { return }
+        guard !isUpdating else { return }
+        isUpdating = true
+
+        debugLog("UpdateChecker: Downloading update v\(manifest.version) from \(manifest.url)")
+        showNotification(title: "CallBridge", message: "Update v\(manifest.version) downloaden...")
+
+        URLSession.shared.dataTask(with: downloadURL) { [weak self] data, _, error in
+            guard let self = self else { return }
+            guard let data = data, error == nil else {
+                debugLog("UpdateChecker: Download failed: \(error?.localizedDescription ?? "unknown")")
+                DispatchQueue.main.async {
+                    self.showNotification(title: "CallBridge", message: "Update download mislukt")
+                    self.isUpdating = false
+                }
+                return
+            }
+
+            // Verify Ed25519 signature
+            guard self.verifySignature(data: data, signatureBase64: manifest.signature) else {
+                debugLog("UpdateChecker: Signature verification FAILED")
+                DispatchQueue.main.async {
+                    self.showNotification(title: "CallBridge", message: "Update handtekening ongeldig — update geannuleerd")
+                    self.isUpdating = false
+                }
+                return
+            }
+            debugLog("UpdateChecker: Signature verified OK")
+
+            // Write zip to temp
+            let zipPath = "/tmp/CallBridge-update.zip"
+            let extractDir = "/tmp/CallBridge-update"
+            let appDest = "/Applications/CallBridge.app"
+
+            do {
+                try data.write(to: URL(fileURLWithPath: zipPath))
+            } catch {
+                debugLog("UpdateChecker: Failed to write zip: \(error)")
+                DispatchQueue.main.async { self.isUpdating = false }
+                return
+            }
+
+            // Clean previous extract
+            try? FileManager.default.removeItem(atPath: extractDir)
+
+            // Unzip using ditto
+            let unzip = Process()
+            unzip.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+            unzip.arguments = ["-xk", zipPath, extractDir]
+            do {
+                try unzip.run()
+                unzip.waitUntilExit()
+            } catch {
+                debugLog("UpdateChecker: Unzip failed: \(error)")
+                DispatchQueue.main.async { self.isUpdating = false }
+                return
+            }
+
+            // Verify extracted app exists
+            let extractedApp = extractDir + "/CallBridge.app"
+            let extractedBinary = extractedApp + "/Contents/MacOS/CallBridge"
+            guard FileManager.default.fileExists(atPath: extractedBinary) else {
+                debugLog("UpdateChecker: Extracted app missing binary at \(extractedBinary)")
+                DispatchQueue.main.async {
+                    self.showNotification(title: "CallBridge", message: "Update pakket ongeldig")
+                    self.isUpdating = false
+                }
+                return
+            }
+
+            // Replace app and relaunch via trampoline
+            DispatchQueue.main.async {
+                self.showNotification(title: "CallBridge", message: "Update v\(manifest.version) installeren...")
+                self.replaceAndRelaunch(extractedApp: extractedApp, appDest: appDest)
+            }
+        }.resume()
+    }
+
+    func verifySignature(data: Data, signatureBase64: String) -> Bool {
+        guard !updatePublicKey.isEmpty,
+              let pubKeyData = Data(base64Encoded: updatePublicKey),
+              let sigData = Data(base64Encoded: signatureBase64) else {
+            debugLog("UpdateChecker: Invalid key or signature data")
+            return false
+        }
+
+        do {
+            let publicKey = try Curve25519.Signing.PublicKey(rawRepresentation: pubKeyData)
+            return publicKey.isValidSignature(sigData, for: data)
+        } catch {
+            debugLog("UpdateChecker: Signature check error: \(error)")
+            return false
+        }
+    }
+
+    func replaceAndRelaunch(extractedApp: String, appDest: String) {
+        let script = """
+        #!/bin/bash
+        sleep 2
+        rm -rf "\(appDest)"
+        mv "\(extractedApp)" "\(appDest)"
+        xattr -cr "\(appDest)"
+        open "\(appDest)"
+        rm -f /tmp/CallBridge-update.zip
+        rm -rf /tmp/CallBridge-update
+        """
+        let scriptPath = "/tmp/callbridge_update_relaunch.sh"
+        do {
+            try script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+            // Make executable
+            let chmod = Process()
+            chmod.executableURL = URL(fileURLWithPath: "/bin/chmod")
+            chmod.arguments = ["+x", scriptPath]
+            try chmod.run()
+            chmod.waitUntilExit()
+
+            // Launch the trampoline
+            let bash = Process()
+            bash.executableURL = URL(fileURLWithPath: "/bin/bash")
+            bash.arguments = [scriptPath]
+            try bash.run()
+
+            debugLog("UpdateChecker: Relaunch trampoline started, terminating app")
+            NSApp.terminate(nil)
+        } catch {
+            debugLog("UpdateChecker: Failed to launch relaunch script: \(error)")
+            showNotification(title: "CallBridge", message: "Update installatie mislukt")
+            isUpdating = false
+        }
+    }
+
+    func showNotification(title: String, message: String) {
+        let script = "display notification \"\(message)\" with title \"\(title)\""
+        let escaped = script.replacingOccurrences(of: "\\", with: "\\\\")
+        Process.launchedProcess(launchPath: "/usr/bin/osascript", arguments: ["-e", escaped])
+    }
+}
+
 // MARK: - Call State Machine
 
 enum CallState {
@@ -139,6 +336,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusTimer: Timer?
     var lastStatus: StatusResponse?
     var serverReachable: Bool = true
+    let updateChecker = UpdateChecker()
+    var updateTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         debugLog("App launching, recordingsDir: \(recordingsDir), logPath: \(debugLogPath)")
@@ -168,6 +367,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Check for unprocessed recordings on launch
         checkForOrphanedRecordings()
+
+        // Check for updates 30s after launch, then every 60 minutes
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+            self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
+        }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
+        }
     }
 
     func updateStatusIcon() {
@@ -221,7 +428,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         debugLog("rebuildMenu — reachable: \(serverReachable), processing: \(lastStatus?.processing.count ?? -1), completed: \(lastStatus?.completed.count ?? -1)")
 
         // Header
-        let header = NSMenuItem(title: "CallBridge v2", action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: "CallBridge v\(appVersion)", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(NSMenuItem.separator())
@@ -276,6 +483,44 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(NSMenuItem.separator())
         }
 
+        // Recent recordings (collapsible submenu)
+        let recentFiles = listRecentRecordings()
+        let recentItem = NSMenuItem(title: "Recente opnames", action: nil, keyEquivalent: "")
+        let recentSubmenu = NSMenu()
+
+        if recentFiles.isEmpty {
+            let emptyItem = NSMenuItem(title: "Geen opnames", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            recentSubmenu.addItem(emptyItem)
+        } else {
+            for file in recentFiles {
+                let name = (file as NSString).lastPathComponent
+                let item = NSMenuItem(title: name, action: #selector(processRecordingFromMenu(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = file
+                recentSubmenu.addItem(item)
+            }
+        }
+
+        recentSubmenu.addItem(NSMenuItem.separator())
+        let manualItem = NSMenuItem(title: "Kies bestand...", action: #selector(showManualProcessDialog), keyEquivalent: "m")
+        manualItem.target = self
+        recentSubmenu.addItem(manualItem)
+
+        recentItem.submenu = recentSubmenu
+        menu.addItem(recentItem)
+
+        // Update section
+        if let version = updateChecker.availableVersion {
+            let updateItem = NSMenuItem(title: "⬆ Update naar v\(version)", action: #selector(installUpdate), keyEquivalent: "")
+            updateItem.target = self
+            menu.addItem(updateItem)
+        } else {
+            let checkItem = NSMenuItem(title: "Zoek naar updates...", action: #selector(checkForUpdatesManually), keyEquivalent: "u")
+            checkItem.target = self
+            menu.addItem(checkItem)
+        }
+
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
     }
@@ -283,6 +528,74 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func openURL(_ sender: NSMenuItem) {
         guard let url = sender.representedObject as? URL else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    @objc func checkForUpdatesManually() {
+        updateChecker.checkForUpdate(notify: true) { [weak self] in
+            self?.rebuildMenu()
+        }
+    }
+
+    @objc func installUpdate() {
+        updateChecker.downloadAndApply()
+    }
+
+    func listRecentRecordings() -> [String] {
+        let fm = FileManager.default
+        let files = (try? fm.contentsOfDirectory(atPath: recordingsDir)) ?? []
+        let extensions = ["mp3", "wav", "m4a", "aiff", "caf"]
+        return files
+            .filter { extensions.contains(($0 as NSString).pathExtension.lowercased()) }
+            .map { (recordingsDir as NSString).appendingPathComponent($0) }
+            .sorted { a, b in
+                let dateA = (try? fm.attributesOfItem(atPath: a)[.modificationDate] as? Date) ?? .distantPast
+                let dateB = (try? fm.attributesOfItem(atPath: b)[.modificationDate] as? Date) ?? .distantPast
+                return dateA > dateB
+            }
+    }
+
+    @objc func processRecordingFromMenu(_ sender: NSMenuItem) {
+        guard let audioPath = sender.representedObject as? String else { return }
+        showManualProcessWindow(audioPath: audioPath)
+    }
+
+    @objc func showManualProcessDialog() {
+        let panel = NSOpenPanel()
+        panel.title = "Kies een opname"
+        panel.allowedContentTypes = [
+            .mp3, .wav, .aiff, .audio
+        ]
+        panel.directoryURL = URL(fileURLWithPath: recordingsDir)
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+
+        if panel.runModal() == .OK, let url = panel.url {
+            showManualProcessWindow(audioPath: url.path)
+        }
+    }
+
+    func showManualProcessWindow(audioPath: String) {
+        let viewModel = ManualProcessViewModel(audioPath: audioPath, appDelegate: self)
+
+        let view = ManualProcessView(viewModel: viewModel)
+        let hostingView = NSHostingView(rootView: view)
+
+        let window = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 400),
+            styleMask: [.titled, .closable, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Handmatig Verwerken"
+        window.contentView = hostingView
+        window.level = .floating
+        window.center()
+        window.isReleasedWhenClosed = false
+
+        dialogWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: - URL Handler
@@ -336,10 +649,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try script.write(toFile: tmpPath, atomically: true, encoding: .utf8)
             if let ahURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.rogueamoeba.audiohijack") {
+                let config = NSWorkspace.OpenConfiguration()
+                config.activates = false
                 NSWorkspace.shared.open(
                     [URL(fileURLWithPath: tmpPath)],
                     withApplicationAt: ahURL,
-                    configuration: NSWorkspace.OpenConfiguration()
+                    configuration: config
                 )
             }
         } catch {
@@ -894,6 +1209,328 @@ struct SaveRecordingView: View {
         }
         .padding(20)
         .frame(width: 420, height: 480)
+    }
+
+    func typeColor(_ type: String) -> Color {
+        switch type {
+        case "Contact": return .blue
+        case "Account": return .purple
+        case "Lead": return .orange
+        default: return .gray
+        }
+    }
+}
+
+// MARK: - Manual Process View Model
+
+class ManualProcessViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate {
+    let audioPath: String
+    weak var appDelegate: AppDelegate?
+
+    @Published var selectedContact: ContactInfo?
+    @Published var searchQuery: String = ""
+    @Published var searchResults: [ContactInfo] = []
+    @Published var isSearching: Bool = false
+    @Published var isSending: Bool = false
+    @Published var isPlaying: Bool = false
+    @Published var playbackProgress: Double = 0
+    @Published var playbackTime: String = "0:00"
+    @Published var duration: String = "0:00"
+
+    private var searchTask: DispatchWorkItem?
+    private var audioPlayer: AVAudioPlayer?
+    private var progressTimer: Timer?
+
+    var fileName: String {
+        (audioPath as NSString).lastPathComponent
+    }
+
+    init(audioPath: String, appDelegate: AppDelegate) {
+        self.audioPath = audioPath
+        self.appDelegate = appDelegate
+        super.init()
+        loadAudioDuration()
+    }
+
+    private func loadAudioDuration() {
+        guard let player = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: audioPath)) else { return }
+        duration = formatTime(player.duration)
+    }
+
+    func togglePlayback() {
+        if isPlaying {
+            pausePlayback()
+        } else {
+            startPlayback()
+        }
+    }
+
+    private func startPlayback() {
+        if audioPlayer == nil {
+            guard let player = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: audioPath)) else { return }
+            player.delegate = self
+            audioPlayer = player
+        }
+        audioPlayer?.play()
+        isPlaying = true
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            self?.updateProgress()
+        }
+    }
+
+    private func pausePlayback() {
+        audioPlayer?.pause()
+        isPlaying = false
+        progressTimer?.invalidate()
+    }
+
+    func seek(to fraction: Double) {
+        guard let player = audioPlayer else { return }
+        player.currentTime = fraction * player.duration
+        updateProgress()
+    }
+
+    private func updateProgress() {
+        guard let player = audioPlayer else { return }
+        playbackProgress = player.duration > 0 ? player.currentTime / player.duration : 0
+        playbackTime = formatTime(player.currentTime)
+    }
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        DispatchQueue.main.async {
+            self.isPlaying = false
+            self.playbackProgress = 0
+            self.playbackTime = "0:00"
+            self.progressTimer?.invalidate()
+        }
+    }
+
+    private func formatTime(_ time: TimeInterval) -> String {
+        let mins = Int(time) / 60
+        let secs = Int(time) % 60
+        return String(format: "%d:%02d", mins, secs)
+    }
+
+    func stopPlayback() {
+        audioPlayer?.stop()
+        progressTimer?.invalidate()
+        audioPlayer = nil
+    }
+
+    func search() {
+        searchTask?.cancel()
+
+        let query = searchQuery.trimmingCharacters(in: .whitespaces)
+        guard query.count >= 2 else {
+            searchResults = []
+            return
+        }
+
+        isSearching = true
+        let task = DispatchWorkItem { [weak self] in
+            self?.appDelegate?.searchContacts(query: query) { results in
+                DispatchQueue.main.async {
+                    self?.searchResults = results
+                    self?.isSearching = false
+                }
+            }
+        }
+        searchTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: task)
+    }
+
+    func process() {
+        guard selectedContact != nil else { return }
+        isSending = true
+        stopPlayback()
+        appDelegate?.sendToBackend(
+            audioPath: audioPath,
+            phoneNumber: selectedContact?.phone ?? "",
+            contact: selectedContact
+        )
+        appDelegate?.dismissDialog()
+    }
+
+    func cancel() {
+        stopPlayback()
+        appDelegate?.dismissDialog()
+    }
+}
+
+// MARK: - Manual Process View
+
+struct ManualProcessView: View {
+    @ObservedObject var viewModel: ManualProcessViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Handmatig Verwerken")
+                .font(.title2)
+                .bold()
+
+            // File info + player
+            VStack(spacing: 8) {
+                HStack {
+                    Text("Bestand:")
+                        .foregroundColor(.secondary)
+                    Text(viewModel.fileName)
+                        .bold()
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 10) {
+                    Button(action: { viewModel.togglePlayback() }) {
+                        Image(systemName: viewModel.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 28))
+                            .foregroundColor(.accentColor)
+                    }
+                    .buttonStyle(.plain)
+
+                    VStack(spacing: 2) {
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color.primary.opacity(0.1))
+                                    .frame(height: 4)
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color.accentColor)
+                                    .frame(width: geo.size.width * viewModel.playbackProgress, height: 4)
+                            }
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        let fraction = max(0, min(1, value.location.x / geo.size.width))
+                                        viewModel.seek(to: fraction)
+                                    }
+                            )
+                        }
+                        .frame(height: 4)
+
+                        HStack {
+                            Text(viewModel.playbackTime)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(viewModel.duration)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(10)
+            .background(Color.primary.opacity(0.03))
+            .cornerRadius(8)
+
+            // Current contact
+            if let contact = viewModel.selectedContact {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Salesforce record:")
+                        .foregroundColor(.secondary)
+                    HStack {
+                        Text(contact.typeLabel)
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(typeColor(contact.type).opacity(0.2))
+                            .cornerRadius(4)
+                        Text(contact.displayName)
+                            .bold()
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.green.opacity(0.1))
+                .cornerRadius(8)
+            } else {
+                Text("Zoek een Salesforce record om te koppelen")
+                    .foregroundColor(.orange)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(8)
+            }
+
+            Divider()
+
+            // Search
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Zoek record:")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+
+                TextField("Zoek op naam...", text: $viewModel.searchQuery)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: viewModel.searchQuery) { _ in
+                        viewModel.search()
+                    }
+
+                if viewModel.isSearching {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                }
+
+                if !viewModel.searchResults.isEmpty {
+                    ScrollView {
+                        VStack(spacing: 2) {
+                            ForEach(viewModel.searchResults) { result in
+                                Button(action: {
+                                    viewModel.selectedContact = result
+                                    viewModel.searchQuery = ""
+                                    viewModel.searchResults = []
+                                }) {
+                                    HStack {
+                                        Text(result.typeLabel)
+                                            .font(.caption)
+                                            .padding(.horizontal, 4)
+                                            .padding(.vertical, 1)
+                                            .background(typeColor(result.type).opacity(0.2))
+                                            .cornerRadius(3)
+                                        Text(result.displayName)
+                                        Spacer()
+                                        if let phone = result.phone {
+                                            Text(phone)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    .padding(6)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .background(Color.primary.opacity(0.05))
+                                .cornerRadius(4)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 150)
+                }
+            }
+
+            Spacer()
+
+            // Buttons
+            HStack {
+                Button("Annuleren") {
+                    viewModel.cancel()
+                }
+                .keyboardShortcut(.escape)
+
+                Spacer()
+
+                Button("Verwerken") {
+                    viewModel.process()
+                }
+                .keyboardShortcut(.return)
+                .disabled(viewModel.selectedContact == nil || viewModel.isSending)
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(20)
+        .frame(width: 420, height: 400)
     }
 
     func typeColor(_ type: String) -> Color {

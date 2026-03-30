@@ -45,9 +45,27 @@ launchctl unload ~/Library/LaunchAgents/com.welisa.callbridge.plist
 launchctl load ~/Library/LaunchAgents/com.welisa.callbridge.plist
 ```
 
+## Releasing CallBridge Updates
+
+CallBridge has a built-in auto-updater. Running instances check `callbridge-update.json` every 60 min and auto-update via Ed25519-signed GitHub Releases.
+
+```bash
+# Build, sign, and prepare a release:
+./build-release.sh 1.2.0
+
+# Commit, push, and create GitHub release:
+git add -A && git commit -m "Release v1.2.0" && git push
+gh release create v1.2.0 CallBridge.app.zip --title "v1.2.0" --notes "..."
+```
+
+Key files:
+- `callbridge-update.json` — version manifest (committed to repo, fetched by running instances)
+- `sign-update.swift` — Ed25519 signing tool (reads `SIGNING_PRIVATE_KEY` from `.env`)
+- `build-release.sh` — automates build, sign, and manifest update
+
 ## Config
 
-- `.env` — API keys and Salesforce credentials (gitignored)
+- `.env` — API keys, Salesforce credentials, and `SIGNING_PRIVATE_KEY` (gitignored)
 - `config.py` — reads env vars
 - Audio Hijack session name: "Voice Chat"
 - Recordings dir: `~/Auto Logger Recordings`

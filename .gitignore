@@ -6,3 +6,5 @@ logs/
 CallBridge/CallBridge.app/
 .claude/
 .venv/
+*.app.zip
+.signing-key
