@@ -7,7 +7,7 @@ import AVFoundation
 // MARK: - Version & Update Config
 
 let appVersion = "1.1.0"
-let updateManifestURL = "https://raw.githubusercontent.com/23492/auto-logger/main/callbridge-update.json"
+let updateManifestURL = "https://raw.githubusercontent.com/23492/callbridge/main/callbridge-update.json"
 let updatePublicKey = "5gNrU3eLBgEa6DG4LqADeADKhPXo3amf52RlbP6bF3c="
 
 // MARK: - Debug Logging

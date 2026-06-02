@@ -49,7 +49,7 @@ echo "Signature: ${SIGNATURE}"
 cat > callbridge-update.json <<MANIFEST
 {
   "version": "${VERSION}",
-  "url": "https://github.com/23492/auto-logger/releases/download/v${VERSION}/CallBridge.app.zip",
+  "url": "https://github.com/23492/callbridge/releases/download/v${VERSION}/CallBridge.app.zip",
   "signature": "${SIGNATURE}",
   "notes": ""
 }
