@@ -25,7 +25,9 @@ echo "Updated Info.plist"
 # 3. Build
 echo "Compiling..."
 cd CallBridge
-swiftc -o CallBridge.app/Contents/MacOS/CallBridge CallBridge/main.swift -framework Cocoa -framework SwiftUI
+mkdir -p CallBridge.app/Contents/MacOS
+swift build -c release
+cp .build/release/CallBridge CallBridge.app/Contents/MacOS/CallBridge
 cd ..
 echo "Build succeeded"
 
