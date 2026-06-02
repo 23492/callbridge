@@ -8,3 +8,4 @@ CallBridge/CallBridge.app/
 .venv/
 *.app.zip
 .signing-key
+.build/
