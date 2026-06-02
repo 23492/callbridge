@@ -36,6 +36,15 @@ cp .build/release/CallBridge CallBridge.app/Contents/MacOS/CallBridge
 cd ..
 echo "Build succeeded"
 
+# 3b. Build Python backend with PyInstaller (BACK-02, D-06, D-09)
+echo "Building Python backend..."
+VENV_DIR="$(mktemp -d)"
+python3 -m venv "$VENV_DIR"
+"$VENV_DIR/bin/pip" install --quiet -r requirements.txt pyinstaller
+"$VENV_DIR/bin/pyinstaller" callbridge-server.spec --noconfirm --distpath CallBridge/CallBridge.app/Contents/Resources
+rm -rf "$VENV_DIR"
+echo "Python backend built"
+
 # 4. Copy Info.plist into app bundle
 cp CallBridge/CallBridge/Info.plist CallBridge/CallBridge.app/Contents/Info.plist
 

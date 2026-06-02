@@ -1,10 +1,12 @@
 import logging
 import os
+import sys
 import tempfile
 import threading
 import uuid
 from collections import deque
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Form, Query
 from fastapi.staticfiles import StaticFiles
@@ -20,16 +22,26 @@ from services.salesforce import (
     create_nno_log,
 )
 
+# Ensure log directory exists before opening FileHandler (D-12)
+_log_dir = Path.home() / "Library" / "Logs" / "CallBridge"
+_log_dir.mkdir(parents=True, exist_ok=True)
+
 # Logging setup
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[
-        logging.FileHandler("call_logger.log"),
+        logging.FileHandler(os.path.join(Path.home(), "Library", "Logs", "CallBridge", "call_logger.log")),
         logging.StreamHandler(),
     ],
 )
 logger = logging.getLogger(__name__)
+
+# PyInstaller bundle detection: use sys._MEIPASS when frozen, __file__ dir otherwise
+if getattr(sys, 'frozen', False):
+    _base_dir = sys._MEIPASS
+else:
+    _base_dir = os.path.dirname(os.path.abspath(__file__))
 
 app = FastAPI(title="Call Logger", version="2.0.0")
 
@@ -91,7 +103,7 @@ def _fail_job(job_id: str):
 
 
 # Serve dashboard static files
-app.mount("/dashboard", StaticFiles(directory="dashboard", html=True), name="dashboard")
+app.mount("/dashboard", StaticFiles(directory=os.path.join(_base_dir, "dashboard"), html=True), name="dashboard")
 
 
 @app.on_event("startup")
