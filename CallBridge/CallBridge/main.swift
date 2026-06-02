@@ -312,6 +312,164 @@ class UpdateChecker {
     }
 }
 
+// MARK: - Backend Supervisor
+
+class BackendSupervisor {
+    private var process: Process?
+    private var restartCount: Int = 0
+    private var isStopping: Bool = false
+    private let supportDir: String
+    private let logsDir: String
+    private let binaryName: String = "callbridge-server"
+    private var spawnTime: Date = Date()
+
+    init() {
+        supportDir = (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/com.welisa.CallBridge")
+        logsDir = (NSHomeDirectory() as NSString).appendingPathComponent("Library/Logs/CallBridge")
+        createDirectories()
+    }
+
+    private func createDirectories() {
+        try? FileManager.default.createDirectory(atPath: supportDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(atPath: logsDir, withIntermediateDirectories: true)
+        debugLog("BackendSupervisor: Directories ready — support: \(supportDir), logs: \(logsDir)")
+    }
+
+    func start() {
+        guard let resourcePath = Bundle.main.resourcePath else {
+            debugLog("BackendSupervisor: No resourcePath")
+            return
+        }
+        let binaryPath = (resourcePath as NSString).appendingPathComponent(binaryName)
+        guard FileManager.default.fileExists(atPath: binaryPath) else {
+            debugLog("BackendSupervisor: Binary not found at \(binaryPath)")
+            return
+        }
+        spawn()
+    }
+
+    private func spawn() {
+        guard !isStopping else { return }
+
+        spawnTime = Date()
+
+        let resourcePath = Bundle.main.resourcePath ?? ""
+        let binaryPath = (resourcePath as NSString).appendingPathComponent(binaryName)
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: binaryPath)
+        proc.currentDirectoryURL = URL(fileURLWithPath: supportDir)
+        proc.environment = ProcessInfo.processInfo.environment
+
+        // Attach pipes so backend output does not leak to the GUI app's terminal (T-02-09)
+        proc.standardOutput = Pipe()
+        proc.standardError = Pipe()
+
+        proc.terminationHandler = { [weak self] terminatedProcess in
+            guard let self = self else { return }
+            let status = terminatedProcess.terminationStatus
+            debugLog("BackendSupervisor: Process exited with status \(status)")
+            if self.isStopping { return }
+
+            // Port-in-use heuristic (D-14): if this was the first spawn attempt and
+            // the process exited very quickly, assume port 8765 is already in use.
+            let elapsed = Date().timeIntervalSince(self.spawnTime)
+            if self.restartCount == 0 && elapsed < 3.0 {
+                debugLog("BackendSupervisor: Fast exit (\(elapsed)s) on first spawn — port 8765 likely in use")
+                DispatchQueue.main.async {
+                    self.showNotification(title: "CallBridge", message: "Poort 8765 al in gebruik")
+                }
+                self.isStopping = true
+                return
+            }
+
+            self.scheduleRestart()
+        }
+
+        process = proc
+        do {
+            try proc.run()
+            debugLog("BackendSupervisor: Spawned backend (restart #\(restartCount))")
+            pollHealth(attempt: 0, maxAttempts: 30)
+        } catch {
+            debugLog("BackendSupervisor: Failed to launch: \(error)")
+            scheduleRestart()
+        }
+    }
+
+    private func pollHealth(attempt: Int, maxAttempts: Int) {
+        guard let url = URL(string: "http://localhost:8765/health") else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 1
+
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+            guard let self = self else { return }
+            if error == nil, let http = response as? HTTPURLResponse, http.statusCode == 200 {
+                debugLog("BackendSupervisor: Health check OK on attempt \(attempt)")
+                self.restartCount = 0
+                DispatchQueue.main.async {
+                    if let appDelegate = NSApp.delegate as? AppDelegate {
+                        appDelegate.serverReachable = true
+                        appDelegate.rebuildMenu()
+                    }
+                }
+            } else if attempt < maxAttempts {
+                DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    self?.pollHealth(attempt: attempt + 1, maxAttempts: maxAttempts)
+                }
+            } else {
+                debugLog("BackendSupervisor: Health check timed out after \(maxAttempts)s")
+                DispatchQueue.main.async {
+                    self.showNotification(title: "CallBridge", message: "Server kon niet starten")
+                    if let appDelegate = NSApp.delegate as? AppDelegate {
+                        appDelegate.serverReachable = false
+                        appDelegate.rebuildMenu()
+                    }
+                }
+            }
+        }.resume()
+    }
+
+    private func scheduleRestart() {
+        guard !isStopping else { return }
+        let delay = min(3.0 * pow(2.0, Double(restartCount)), 30.0)
+        restartCount += 1
+        debugLog("BackendSupervisor: Crash detected (restart \(restartCount)), retrying in \(delay)s")
+        DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.spawn()
+        }
+    }
+
+    func stop() {
+        isStopping = true
+        guard let proc = process else { return }
+        proc.terminate()
+        debugLog("BackendSupervisor: Sent SIGTERM to backend")
+
+        // Wait up to 5 seconds for the process to exit
+        DispatchQueue.global(qos: .background).async {
+            var waited = 0
+            while proc.isRunning && waited < 50 {
+                Thread.sleep(forTimeInterval: 0.1)
+                waited += 1
+            }
+            if proc.isRunning {
+                // Force kill: use Darwin kill() since Swift Process has no SIGKILL method
+                kill(proc.processIdentifier, SIGKILL)
+                debugLog("BackendSupervisor: Sent SIGKILL to backend (still running after 5s)")
+            }
+            debugLog("BackendSupervisor: Backend stopped")
+        }
+    }
+
+    private func showNotification(title: String, message: String) {
+        let safeTitle   = title.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let safeMessage = message.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "display notification \"\(safeMessage)\" with title \"\(safeTitle)\""
+        Process.launchedProcess(launchPath: "/usr/bin/osascript", arguments: ["-e", script])
+    }
+}
+
 // MARK: - Call State Machine
 
 enum CallState {
@@ -339,12 +497,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var serverReachable: Bool = true
     let updateChecker = UpdateChecker()
     var updateTimer: Timer?
+    let backendSupervisor = BackendSupervisor()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         debugLog("App launching, recordingsDir: \(recordingsDir), logPath: \(debugLogPath)")
 
         // Create recordings directory
         try? FileManager.default.createDirectory(atPath: recordingsDir, withIntermediateDirectories: true)
+
+        // Start supervised backend child process (D-01)
+        backendSupervisor.start()
 
         // Setup menu bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -376,6 +538,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        backendSupervisor.stop()
     }
 
     func updateStatusIcon() {
