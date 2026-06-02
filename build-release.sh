@@ -66,3 +66,5 @@ echo "  3. gh release create v${VERSION} ${ZIP_NAME} --title 'v${VERSION}' --not
 echo ""
 echo "To deploy locally now:"
 echo "  pkill -f CallBridge.app; sleep 1; rm -rf /Applications/CallBridge.app && cp -R CallBridge/CallBridge.app /Applications/CallBridge.app && open /Applications/CallBridge.app"
+echo ""
+echo "For LaunchAgent installation and migration instructions, see: launchagents/README.md"

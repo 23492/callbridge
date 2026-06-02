@@ -44,14 +44,16 @@ pkill -f "CallBridge.app"; sleep 1; rm -rf /Applications/CallBridge.app && cp -R
 Both services start on login via `~/Library/LaunchAgents/`:
 
 - `com.welisa.callbridge.plist` — launches `/Applications/CallBridge.app`
-- `com.autologger.server.plist` — launches uvicorn (KeepAlive: true), logs to `logs/`
+- `com.welisa.callbridge-server.plist` — launches uvicorn (KeepAlive: true), logs to `logs/`
 
 Reload after changes:
 
 ```bash
-launchctl unload ~/Library/LaunchAgents/com.welisa.callbridge.plist
-launchctl load ~/Library/LaunchAgents/com.welisa.callbridge.plist
+launchctl unload ~/Library/LaunchAgents/com.welisa.callbridge-server.plist
+launchctl load ~/Library/LaunchAgents/com.welisa.callbridge-server.plist
 ```
+
+Plist templates live in `launchagents/` — see `launchagents/README.md` for install instructions.
 
 ## Releasing CallBridge Updates
 
@@ -170,7 +172,7 @@ CallBridge is a macOS menu-bar app that intercepts `tel://` URLs, records calls 
 - Salesforce OAuth2 (login.salesforce.com) - Contact/Account/Lead search via SOSL, Task/ContentNote creation
 - Requires: username, password, security token (env vars)
 - Domain: `welisa` (production org)
-- GitHub Releases API - Fetches manifest from `https://raw.githubusercontent.com/23492/auto-logger/main/callbridge-update.json`
+- GitHub Releases API - Fetches manifest from `https://raw.githubusercontent.com/23492/callbridge/main/callbridge-update.json`
 - Check frequency: every 60 minutes (from running CallBridge instances)
 
 ## Logging & Observability
@@ -391,7 +393,7 @@ CallBridge is a macOS menu-bar app that intercepts `tel://` URLs, records calls 
 - Triggers: macOS system forwards tel:// URL to CallBridge (registered via LaunchAgent or URL scheme)
 - Responsibilities: Validate not already recording, snapshot folder, start Audio Hijack, forward to Phone/FaceTime, set state to recording, start polling
 - Location: `main.py:34` (app = FastAPI(...))
-- Triggers: `uvicorn main:app --host localhost --port 8765` (via LaunchAgent com.autologger.server.plist)
+- Triggers: `uvicorn main:app --host localhost --port 8765` (via LaunchAgent com.welisa.callbridge-server.plist)
 - Responsibilities: Mount dashboard static files, define routes, seed recent calls from Salesforce
 - Location: `main.swift:562` (`showManualProcessDialog()`)
 - Triggers: User selects "Kies bestand..." in menu or "Handmatig Verwerken"
