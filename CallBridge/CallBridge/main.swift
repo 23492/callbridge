@@ -305,9 +305,10 @@ class UpdateChecker {
     }
 
     func showNotification(title: String, message: String) {
-        let script = "display notification \"\(message)\" with title \"\(title)\""
-        let escaped = script.replacingOccurrences(of: "\\", with: "\\\\")
-        Process.launchedProcess(launchPath: "/usr/bin/osascript", arguments: ["-e", escaped])
+        let safeTitle   = title.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let safeMessage = message.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "display notification \"\(safeMessage)\" with title \"\(safeTitle)\""
+        Process.launchedProcess(launchPath: "/usr/bin/osascript", arguments: ["-e", script])
     }
 }
 
@@ -696,18 +697,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }
 
-    func isFileSizeStable(_ path: String) -> Bool {
+    func isFileSizeStable(_ path: String, completion: @escaping (Bool) -> Void) {
         let fm = FileManager.default
         guard let attrs1 = try? fm.attributesOfItem(atPath: path),
-              let size1 = attrs1[.size] as? UInt64 else { return false }
-        if size1 == 0 { return false }
-
-        Thread.sleep(forTimeInterval: 2.0)
-
-        guard let attrs2 = try? fm.attributesOfItem(atPath: path),
-              let size2 = attrs2[.size] as? UInt64 else { return false }
-
-        return size1 == size2
+              let size1 = attrs1[.size] as? UInt64, size1 > 0 else {
+            completion(false); return
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) {
+            guard let attrs2 = try? fm.attributesOfItem(atPath: path),
+                  let size2 = attrs2[.size] as? UInt64 else {
+                completion(false); return
+            }
+            completion(size1 == size2)
+        }
     }
 
     // MARK: - Polling
@@ -743,18 +745,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Check for new file in recordings folder
         if let newFile = findNewRecording(existingFiles: existingFiles) {
             NSLog("CallBridge: New recording found: %@", newFile)
+            // Stop the timer immediately so no further poll cycles can race on the same file (CR-03)
+            stopPolling()
 
-            // Wait for file to stabilize (background thread)
-            DispatchQueue.global().async { [weak self] in
-                guard let self = self else { return }
-                if self.isFileSizeStable(newFile) {
-                    DispatchQueue.main.async {
-                        self.stopPolling()
-                        self.stopAudioHijack()
-                        self.onRecordingComplete(phoneNumber: phoneNumber, audioPath: newFile)
-                    }
+            isFileSizeStable(newFile) { [weak self] stable in
+                guard let self = self, stable else { return }
+                DispatchQueue.main.async {
+                    self.stopAudioHijack()
+                    self.onRecordingComplete(phoneNumber: phoneNumber, audioPath: newFile)
                 }
             }
+            return  // skip Audio Hijack state branch this cycle (CR-03)
         }
 
         // Also query Audio Hijack state (writes to /tmp/ah_state.json)
@@ -768,9 +769,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
                 guard let self = self else { return }
                 if let newFile = self.findNewRecording(existingFiles: existingFiles) {
-                    if self.isFileSizeStable(newFile) {
-                        self.stopPolling()
-                        self.onRecordingComplete(phoneNumber: phoneNumber, audioPath: newFile)
+                    self.isFileSizeStable(newFile) { [weak self] stable in
+                        guard let self = self, stable else { return }
+                        DispatchQueue.main.async {
+                            self.stopPolling()
+                            self.onRecordingComplete(phoneNumber: phoneNumber, audioPath: newFile)
+                        }
                     }
                 } else {
                     NSLog("CallBridge: No recording file found after session stop")
@@ -943,9 +947,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showNotification(title: String, message: String) {
-        let script = "display notification \"\(message)\" with title \"\(title)\""
-        let escaped = script.replacingOccurrences(of: "\\", with: "\\\\")
-        Process.launchedProcess(launchPath: "/usr/bin/osascript", arguments: ["-e", escaped])
+        let safeTitle   = title.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let safeMessage = message.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "display notification \"\(safeMessage)\" with title \"\(safeTitle)\""
+        Process.launchedProcess(launchPath: "/usr/bin/osascript", arguments: ["-e", script])
     }
 
     func checkForOrphanedRecordings() {

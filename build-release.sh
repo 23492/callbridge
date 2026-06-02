@@ -8,6 +8,11 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: VERSION must be in semver format (e.g. 1.2.0)"
+    exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 

@@ -23,8 +23,8 @@
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>logs/uvicorn.out.log</string>
+    <string>/Users/kiranknoppert/dev/callbridge/logs/uvicorn.out.log</string>
     <key>StandardErrorPath</key>
-    <string>logs/uvicorn.err.log</string>
+    <string>/Users/kiranknoppert/dev/callbridge/logs/uvicorn.err.log</string>
 </dict>
 </plist>
