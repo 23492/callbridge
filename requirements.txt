@@ -3,3 +3,4 @@ uvicorn==0.30.6
 simple-salesforce==1.12.6
 requests==2.32.3
 python-dotenv==1.0.1
+python-multipart==0.0.9

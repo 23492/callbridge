@@ -12,6 +12,7 @@ a = Analysis(
         ('dashboard', 'dashboard'),  # Bundle dashboard/ so /dashboard endpoint works at runtime (D-08)
     ],
     hiddenimports=[
+        'multipart',
         # uvicorn uses runtime imports that PyInstaller cannot discover statically
         'uvicorn.logging',
         'uvicorn.loops',
