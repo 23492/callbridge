@@ -1,7 +1,10 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Read .env from Application Support so the bundled binary finds it regardless of CWD (D-13)
+_app_support = Path.home() / "Library" / "Application Support" / "com.welisa.CallBridge"
+load_dotenv(dotenv_path=_app_support / ".env")
 
 # AssemblyAI
 ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
