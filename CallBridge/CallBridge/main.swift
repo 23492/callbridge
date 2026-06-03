@@ -599,8 +599,12 @@ class SettingsViewModel: ObservableObject {
         isValidating = true
         validationMessage = ""
 
+        // simple_salesforce builds the login URL as https://<domain>.salesforce.com/services/Soap/u/<v>
+        // ('login' = production, 'test' = sandbox, otherwise a My Domain). Match it so Valideer
+        // hits the same endpoint the backend will.
+        let domain = sfDomain.isEmpty ? "login" : sfDomain
         guard !sfUsername.isEmpty, !sfPassword.isEmpty,
-              let url = URL(string: "https://login.salesforce.com/services/Soap/u/58.0") else {
+              let url = URL(string: "https://\(domain).salesforce.com/services/Soap/u/58.0") else {
             validationMessage = "Verbinding mislukt: vul minimaal gebruikersnaam en wachtwoord in"
             isValidating = false
             return
@@ -819,10 +823,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             completion(false)
             return
         }
+        let domain = KeychainHelper.read(key: "SF_DOMAIN") ?? "login"
         guard let username = KeychainHelper.read(key: "SF_USERNAME"),
               let password = KeychainHelper.read(key: "SF_PASSWORD"),
               let token   = KeychainHelper.read(key: "SF_SECURITY_TOKEN"),
-              let url = URL(string: "https://login.salesforce.com/services/Soap/u/58.0") else {
+              let url = URL(string: "https://\(domain).salesforce.com/services/Soap/u/58.0") else {
             completion(false)
             return
         }
