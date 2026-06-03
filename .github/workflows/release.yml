@@ -1,0 +1,49 @@
+name: Release
+
+# Push-button release: builds the app + embedded backend on a macOS runner,
+# ad-hoc code-signs it, EdDSA-signs the zip with the SIGNING_PRIVATE_KEY secret,
+# publishes a GitHub Release, and bumps callbridge-update.json so installed
+# copies auto-update within the hour.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (semver, e.g. 2.0.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore EdDSA signing key
+        run: echo "SIGNING_PRIVATE_KEY=${{ secrets.SIGNING_PRIVATE_KEY }}" > .env
+
+      - name: Build, code-sign, and sign the update
+        run: |
+          chmod +x build-release.sh
+          ./build-release.sh "${{ inputs.version }}"
+
+      - name: Commit version bump + update manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CallBridge/CallBridge/main.swift CallBridge/CallBridge/Info.plist callbridge-update.json
+          git commit -m "Release v${{ inputs.version }}"
+          git push
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ inputs.version }}" CallBridge.app.zip \
+            --title "CallBridge v${{ inputs.version }}" \
+            --notes "Automated build. The in-app auto-updater rolls this out to installed copies (EdDSA-verified)."
+
+      - name: Remove signing key from runner
+        if: always()
+        run: rm -f .env

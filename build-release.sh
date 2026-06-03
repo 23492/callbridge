@@ -48,6 +48,10 @@ echo "Python backend built"
 # 4. Copy Info.plist into app bundle
 cp CallBridge/CallBridge/Info.plist CallBridge/CallBridge.app/Contents/Info.plist
 
+# 4b. Ad-hoc code-sign the bundle so macOS will exec the embedded backend
+echo "Code signing (ad-hoc)..."
+codesign --force --sign - CallBridge/CallBridge.app
+
 # 5. Create zip (ditto preserves macOS metadata)
 ZIP_NAME="CallBridge.app.zip"
 rm -f "$ZIP_NAME"
