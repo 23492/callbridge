@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Form, Query
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from services.transcription import transcribe_audio
 from services.summarizer import generate_summary, extract_action_items
@@ -139,6 +140,31 @@ def seed_recent_calls():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+class CredentialValidationRequest(BaseModel):
+    SF_USERNAME: str
+    SF_PASSWORD: str
+    SF_SECURITY_TOKEN: str
+    SF_DOMAIN: str
+
+
+@app.post("/validate-credentials")
+def validate_credentials(body: CredentialValidationRequest):
+    """Read-only Salesforce credential check — calls limits() only, no record creation."""
+    try:
+        from simple_salesforce import Salesforce
+        sf = Salesforce(
+            username=body.SF_USERNAME,
+            password=body.SF_PASSWORD,
+            security_token=body.SF_SECURITY_TOKEN,
+            domain=body.SF_DOMAIN,
+        )
+        sf.limits()
+        return {"status": "ok"}
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail={"error": str(e)})
 
 
 @app.get("/status")
