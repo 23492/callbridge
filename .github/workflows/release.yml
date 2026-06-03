@@ -40,9 +40,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${{ inputs.version }}" CallBridge.app.zip \
+          gh release create "v${{ inputs.version }}" CallBridge.app.zip "audio-hijack/Voice Chat.ah4session" \
             --title "CallBridge v${{ inputs.version }}" \
-            --notes "Automated build. The in-app auto-updater rolls this out to installed copies (EdDSA-verified)."
+            --notes "Automated build. Install manually via gh release download; auto-update is disabled on this private repo. Includes the Audio Hijack Voice Chat session template (import it into Audio Hijack on each Mac)."
 
       - name: Remove signing key from runner
         if: always()
