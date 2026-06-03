@@ -9,3 +9,4 @@ CallBridge/CallBridge.app/
 *.app.zip
 .signing-key
 .build/
+.planning/
