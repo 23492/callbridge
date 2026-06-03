@@ -609,7 +609,7 @@ class SettingsViewModel: ObservableObject {
         // Validate directly against Salesforce via a SOAP login (read-only, no backend needed).
         let soapBody = """
         <?xml version="1.0" encoding="utf-8"?>
-        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:enterprise.soap.sforce.com">
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:partner.soap.sforce.com">
           <soapenv:Body>
             <urn:login>
               <urn:username>\(sfUsername)</urn:username>
@@ -828,7 +828,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let soapBody = """
         <?xml version="1.0" encoding="utf-8"?>
-        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:enterprise.soap.sforce.com">
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:partner.soap.sforce.com">
           <soapenv:Body>
             <urn:login>
               <urn:username>\(username)</urn:username>
