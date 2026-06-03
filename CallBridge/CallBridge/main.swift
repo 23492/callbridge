@@ -760,6 +760,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // an LSUIElement (menubar-only) app has no menu bar and otherwise can't paste.
         setupMainMenu()
 
+        // Claim the tel: handler so calls route through CallBridge (record + forward).
+        claimTelHandlerIfNeeded()
+
         // Gate backend start on credential presence check (D-05, D-06)
         credentialCheckPassed { [weak self] passed in
             guard let self = self else { return }
@@ -822,6 +825,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: "Selecteer alles", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         editItem.submenu = editMenu
         NSApp.mainMenu = mainMenu
+    }
+
+    /// Make CallBridge the handler for `tel:` links so calls route through it (record +
+    /// forward). On a clean Mac the default is FaceTime, and macOS 26 removed the UI to
+    /// change it — but this programmatic claim works for a non-sandboxed app like ours.
+    /// Only claims when CallBridge isn't already the default, so it won't re-prompt or
+    /// fight the user's choice on every launch.
+    private func claimTelHandlerIfNeeded() {
+        guard let probe = URL(string: "tel:0") else { return }
+        let myURL = Bundle.main.bundleURL
+        if NSWorkspace.shared.urlForApplication(toOpen: probe)?.standardizedFileURL == myURL.standardizedFileURL {
+            debugLog("claimTelHandler: already the default tel: handler")
+            return
+        }
+        NSWorkspace.shared.setDefaultApplication(at: myURL, toOpenURLsWithScheme: "tel") { error in
+            if let error = error {
+                debugLog("claimTelHandler: failed to set tel: handler — \(error.localizedDescription)")
+            } else {
+                debugLog("claimTelHandler: CallBridge is now the default tel: handler")
+            }
+        }
     }
 
     private func credentialCheckPassed(completion: @escaping (Bool) -> Void) {
