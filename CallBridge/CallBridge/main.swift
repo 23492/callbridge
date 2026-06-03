@@ -548,6 +548,154 @@ enum CallState {
     case processing
 }
 
+// MARK: - Settings
+
+class SettingsViewModel: ObservableObject {
+    var onComplete: (() -> Void)?
+
+    @Published var assemblyAIKey: String = ""
+    @Published var geminiKey: String = ""
+    @Published var sfUsername: String = ""
+    @Published var sfPassword: String = ""
+    @Published var sfSecurityToken: String = ""
+    @Published var sfDomain: String = "welisa"
+    @Published var validationMessage: String = ""
+    @Published var isValidating: Bool = false
+    @Published var isSaving: Bool = false
+
+    init() {
+        assemblyAIKey   = KeychainHelper.read(key: "ASSEMBLYAI_API_KEY") ?? ""
+        geminiKey       = KeychainHelper.read(key: "GEMINI_API_KEY") ?? ""
+        sfUsername      = KeychainHelper.read(key: "SF_USERNAME") ?? ""
+        sfPassword      = KeychainHelper.read(key: "SF_PASSWORD") ?? ""
+        sfSecurityToken = KeychainHelper.read(key: "SF_SECURITY_TOKEN") ?? ""
+        sfDomain        = KeychainHelper.read(key: "SF_DOMAIN") ?? "welisa"
+    }
+
+    func validate() {
+        isValidating = true
+        validationMessage = ""
+
+        guard let url = URL(string: "http://localhost:8765/validate-credentials") else {
+            validationMessage = "Verbinding mislukt: ongeldig URL"
+            isValidating = false
+            return
+        }
+
+        let body: [String: String] = [
+            "SF_USERNAME":       sfUsername,
+            "SF_PASSWORD":       sfPassword,
+            "SF_SECURITY_TOKEN": sfSecurityToken,
+            "SF_DOMAIN":         sfDomain
+        ]
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: body) else {
+            validationMessage = "Verbinding mislukt: serialisatiefout"
+            isValidating = false
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = jsonData
+        request.timeoutInterval = 15
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isValidating = false
+                if let error = error {
+                    self.validationMessage = "Server niet bereikbaar: \(error.localizedDescription)"
+                    return
+                }
+                guard let http = response as? HTTPURLResponse else {
+                    self.validationMessage = "Verbinding mislukt: ongeldig antwoord"
+                    return
+                }
+                if http.statusCode == 200 {
+                    self.validationMessage = "Salesforce verbinding geslaagd ✓"
+                } else {
+                    let msg: String
+                    if let data = data,
+                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let err = json["error"] as? String {
+                        msg = err
+                    } else {
+                        msg = "HTTP \(http.statusCode)"
+                    }
+                    self.validationMessage = "Verbinding mislukt: \(msg)"
+                }
+            }
+        }.resume()
+    }
+
+    func save() {
+        isSaving = true
+        KeychainHelper.save(key: "ASSEMBLYAI_API_KEY", value: assemblyAIKey)
+        KeychainHelper.save(key: "GEMINI_API_KEY",     value: geminiKey)
+        KeychainHelper.save(key: "SF_USERNAME",        value: sfUsername)
+        KeychainHelper.save(key: "SF_PASSWORD",        value: sfPassword)
+        KeychainHelper.save(key: "SF_SECURITY_TOKEN",  value: sfSecurityToken)
+        KeychainHelper.save(key: "SF_DOMAIN",          value: sfDomain)
+        isSaving = false
+        onComplete?()
+    }
+}
+
+struct SettingsView: View {
+    @ObservedObject var viewModel: SettingsViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section("API Keys") {
+                    SecureField("AssemblyAI API key", text: $viewModel.assemblyAIKey)
+                    SecureField("Gemini API key",     text: $viewModel.geminiKey)
+                }
+                Section("Salesforce") {
+                    SecureField("Gebruikersnaam",  text: $viewModel.sfUsername)
+                    SecureField("Wachtwoord",      text: $viewModel.sfPassword)
+                    SecureField("Security token",  text: $viewModel.sfSecurityToken)
+                }
+                Section("Salesforce domein") {
+                    TextField("Domein (bijv. welisa)", text: $viewModel.sfDomain)
+                }
+            }
+            .formStyle(.grouped)
+
+            if !viewModel.validationMessage.isEmpty {
+                let isError = viewModel.validationMessage.contains("mislukt") ||
+                              viewModel.validationMessage.contains("bereikbaar")
+                Text(viewModel.validationMessage)
+                    .foregroundColor(isError ? .red : .green)
+                    .font(.callout)
+                    .padding(.horizontal)
+                    .padding(.top, 6)
+            }
+
+            HStack {
+                Button("Valideer") { viewModel.validate() }
+                    .disabled(viewModel.isValidating)
+                Spacer()
+                Button("Opslaan") { viewModel.save() }
+                    .disabled(
+                        viewModel.assemblyAIKey.isEmpty ||
+                        viewModel.geminiKey.isEmpty ||
+                        viewModel.sfUsername.isEmpty ||
+                        viewModel.sfPassword.isEmpty ||
+                        viewModel.sfSecurityToken.isEmpty ||
+                        viewModel.sfDomain.isEmpty ||
+                        viewModel.isSaving
+                    )
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding()
+        }
+        .frame(width: 420)
+        .padding(.bottom)
+    }
+}
+
 // MARK: - App Delegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -561,9 +709,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var state: CallState = .idle
     var pollTimer: Timer?
     var dialogWindow: NSWindow?
+    var settingsWindow: NSWindow?
     var statusTimer: Timer?
     var lastStatus: StatusResponse?
     var serverReachable: Bool = true
+    var pendingBackendStart: Bool = false
     let updateChecker = UpdateChecker()
     var updateTimer: Timer?
     let backendSupervisor = BackendSupervisor()
@@ -674,6 +824,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             item.isEnabled = false
             menu.addItem(item)
             menu.addItem(NSMenuItem.separator())
+            let settingsItem = NSMenuItem(title: "Instellingen…", action: #selector(showSettings), keyEquivalent: "")
+            settingsItem.target = self
+            menu.addItem(settingsItem)
             menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
             statusItem.menu = menu
             return
@@ -757,8 +910,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(checkItem)
         }
 
+        let settingsMenuItem = NSMenuItem(title: "Instellingen…", action: #selector(showSettings), keyEquivalent: "")
+        settingsMenuItem.target = self
+        menu.addItem(settingsMenuItem)
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
+    }
+
+    @objc func showSettings() {
+        let viewModel = SettingsViewModel()
+        viewModel.onComplete = { [weak self] in
+            self?.settingsWindow?.close()
+            self?.settingsWindow = nil
+            if KeychainHelper.allPresent(keys: ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY",
+                                                 "SF_USERNAME", "SF_PASSWORD",
+                                                 "SF_SECURITY_TOKEN", "SF_DOMAIN"]),
+               self?.pendingBackendStart == true {
+                self?.backendSupervisor.start()
+                self?.pendingBackendStart = false
+            }
+        }
+        let hostingController = NSHostingController(rootView: SettingsView(viewModel: viewModel))
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "Instellingen"
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        window.center()
+        settingsWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc func openURL(_ sender: NSMenuItem) {
