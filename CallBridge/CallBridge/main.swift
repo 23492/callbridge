@@ -409,9 +409,11 @@ class BackendSupervisor {
             debugLog("BackendSupervisor: No resourcePath")
             return
         }
-        let binaryPath = (resourcePath as NSString).appendingPathComponent(binaryName)
-        guard FileManager.default.fileExists(atPath: binaryPath) else {
-            debugLog("BackendSupervisor: Binary not found at \(binaryPath)")
+        // PyInstaller --onedir nests the executable in a folder named <binaryName>,
+        // i.e. <Resources>/callbridge-server/callbridge-server — exec the file, not the folder.
+        let binaryPath = ((resourcePath as NSString).appendingPathComponent(binaryName) as NSString).appendingPathComponent(binaryName)
+        guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
+            debugLog("BackendSupervisor: No executable backend at \(binaryPath)")
             return
         }
         spawn()
@@ -436,7 +438,9 @@ class BackendSupervisor {
         spawnTime = Date()
 
         let resourcePath = Bundle.main.resourcePath ?? ""
-        let binaryPath = (resourcePath as NSString).appendingPathComponent(binaryName)
+        // PyInstaller --onedir nests the executable in a folder named <binaryName>,
+        // i.e. <Resources>/callbridge-server/callbridge-server — exec the file, not the folder.
+        let binaryPath = ((resourcePath as NSString).appendingPathComponent(binaryName) as NSString).appendingPathComponent(binaryName)
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binaryPath)
