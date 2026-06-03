@@ -417,6 +417,19 @@ class BackendSupervisor {
         spawn()
     }
 
+    /// Restart the running backend so it re-reads credentials from the Keychain on
+    /// spawn (used after Settings saves new creds); starts it if not yet running.
+    func reloadCredentials() {
+        isStopping = false
+        if let proc = process, proc.isRunning {
+            debugLog("BackendSupervisor: credentials changed — restarting backend")
+            restartCount = max(restartCount, 1)   // skip the restartCount==0 port-in-use heuristic
+            proc.terminate()                       // terminationHandler → scheduleRestart → spawn re-reads Keychain
+        } else {
+            start()
+        }
+    }
+
     private func spawn() {
         guard !isStopping else { return }
 
@@ -586,54 +599,55 @@ class SettingsViewModel: ObservableObject {
         isValidating = true
         validationMessage = ""
 
-        guard let url = URL(string: "http://localhost:8765/validate-credentials") else {
-            validationMessage = "Verbinding mislukt: ongeldig URL"
+        guard !sfUsername.isEmpty, !sfPassword.isEmpty,
+              let url = URL(string: "https://login.salesforce.com/services/Soap/u/58.0") else {
+            validationMessage = "Verbinding mislukt: vul minimaal gebruikersnaam en wachtwoord in"
             isValidating = false
             return
         }
 
-        let body: [String: String] = [
-            "SF_USERNAME":       sfUsername,
-            "SF_PASSWORD":       sfPassword,
-            "SF_SECURITY_TOKEN": sfSecurityToken,
-            "SF_DOMAIN":         sfDomain
-        ]
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: body) else {
-            validationMessage = "Verbinding mislukt: serialisatiefout"
-            isValidating = false
-            return
-        }
+        // Validate directly against Salesforce via a SOAP login (read-only, no backend needed).
+        let soapBody = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:enterprise.soap.sforce.com">
+          <soapenv:Body>
+            <urn:login>
+              <urn:username>\(sfUsername)</urn:username>
+              <urn:password>\(sfPassword)\(sfSecurityToken)</urn:password>
+            </urn:login>
+          </soapenv:Body>
+        </soapenv:Envelope>
+        """
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = jsonData
+        request.setValue("text/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("\"\"", forHTTPHeaderField: "SOAPAction")
+        request.httpBody = soapBody.data(using: .utf8)
         request.timeoutInterval = 15
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isValidating = false
                 if let error = error {
-                    self.validationMessage = "Server niet bereikbaar: \(error.localizedDescription)"
+                    self.validationMessage = "Verbinding mislukt: \(error.localizedDescription)"
                     return
                 }
-                guard let http = response as? HTTPURLResponse else {
-                    self.validationMessage = "Verbinding mislukt: ongeldig antwoord"
+                guard let data = data, let body = String(data: data, encoding: .utf8) else {
+                    self.validationMessage = "Verbinding mislukt: leeg antwoord"
                     return
                 }
-                if http.statusCode == 200 {
+                if body.contains("<sessionId>") {
                     self.validationMessage = "Salesforce verbinding geslaagd ✓"
                 } else {
-                    let msg: String
-                    if let data = data,
-                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let err = json["error"] as? String {
-                        msg = err
+                    let fault: String
+                    if let r = body.range(of: "<faultstring>"), let e = body.range(of: "</faultstring>") {
+                        fault = String(body[r.upperBound..<e.lowerBound])
                     } else {
-                        msg = "HTTP \(http.statusCode)"
+                        fault = "ongeldige inloggegevens"
                     }
-                    self.validationMessage = "Verbinding mislukt: \(msg)"
+                    self.validationMessage = "Verbinding mislukt: \(fault)"
                 }
             }
         }.resume()
@@ -701,7 +715,7 @@ struct SettingsView: View {
             }
             .padding()
         }
-        .frame(width: 420)
+        .frame(width: 480, height: 580)
         .padding(.bottom)
     }
 }
@@ -990,14 +1004,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showSettings() {
         let viewModel = SettingsViewModel()
         viewModel.onComplete = { [weak self] in
-            self?.settingsWindow?.close()
-            self?.settingsWindow = nil
+            guard let self = self else { return }
+            self.settingsWindow?.close()
+            self.settingsWindow = nil
             if KeychainHelper.allPresent(keys: ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY",
                                                  "SF_USERNAME", "SF_PASSWORD",
-                                                 "SF_SECURITY_TOKEN", "SF_DOMAIN"]),
-               self?.pendingBackendStart == true {
-                self?.backendSupervisor.start()
-                self?.pendingBackendStart = false
+                                                 "SF_SECURITY_TOKEN", "SF_DOMAIN"]) {
+                self.pendingBackendStart = false
+                self.backendSupervisor.reloadCredentials()
             }
         }
         let hostingController = NSHostingController(rootView: SettingsView(viewModel: viewModel))
