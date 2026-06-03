@@ -748,6 +748,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create recordings directory
         try? FileManager.default.createDirectory(atPath: recordingsDir, withIntermediateDirectories: true)
 
+        // Edit menu so Cut/Copy/Paste/Select-All (⌘X/⌘C/⌘V/⌘A) work in text fields —
+        // an LSUIElement (menubar-only) app has no menu bar and otherwise can't paste.
+        setupMainMenu()
+
         // Gate backend start on credential presence check (D-05, D-06)
         credentialCheckPassed { [weak self] passed in
             guard let self = self else { return }
@@ -789,6 +793,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
         }
+    }
+
+    /// Minimal main menu with a standard Edit menu so Cut/Copy/Paste/Select-All
+    /// key equivalents route to the focused text field. Without it, a menubar-only
+    /// (LSUIElement) app has no Edit menu and ⌘V does nothing.
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(NSMenuItem(title: "Knippen", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Kopiëren", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Plakken", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Selecteer alles", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editItem.submenu = editMenu
+        NSApp.mainMenu = mainMenu
     }
 
     private func credentialCheckPassed(completion: @escaping (Bool) -> Void) {
