@@ -794,13 +794,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Check for unprocessed recordings on launch
         checkForOrphanedRecordings()
 
-        // Check for updates 30s after launch, then every 60 minutes
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
-            self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
-        }
-        updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
-            self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
-        }
+        // Auto-update DISABLED: this is a PRIVATE repo, so the manifest at
+        // raw.githubusercontent.com (and the release-asset download) require auth
+        // that a distributable app can't safely embed. The poll only ever produced
+        // "decode error" and was a latent risk of overwriting a locally-deployed
+        // build with an older release. Update manually via `gh release download`.
+        // Re-enable only with a PUBLIC manifest host + authenticated asset download.
+        // DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+        //     self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
+        // }
+        // updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+        //     self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
+        // }
     }
 
     /// Minimal main menu with a standard Edit menu so Cut/Copy/Paste/Select-All
@@ -1225,19 +1230,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return nil
     }
 
-    func isFileSizeStable(_ path: String, completion: @escaping (Bool) -> Void) {
+    func isFileSizeStable(_ path: String) -> Bool {
         let fm = FileManager.default
         guard let attrs1 = try? fm.attributesOfItem(atPath: path),
-              let size1 = attrs1[.size] as? UInt64, size1 > 0 else {
-            completion(false); return
-        }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) {
-            guard let attrs2 = try? fm.attributesOfItem(atPath: path),
-                  let size2 = attrs2[.size] as? UInt64 else {
-                completion(false); return
-            }
-            completion(size1 == size2)
-        }
+              let size1 = attrs1[.size] as? UInt64 else { return false }
+        if size1 == 0 { return false }
+
+        Thread.sleep(forTimeInterval: 2.0)
+
+        guard let attrs2 = try? fm.attributesOfItem(atPath: path),
+              let size2 = attrs2[.size] as? UInt64 else { return false }
+
+        return size1 == size2
     }
 
     // MARK: - Polling
@@ -1273,17 +1277,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Check for new file in recordings folder
         if let newFile = findNewRecording(existingFiles: existingFiles) {
             NSLog("CallBridge: New recording found: %@", newFile)
-            // Stop the timer immediately so no further poll cycles can race on the same file (CR-03)
-            stopPolling()
 
-            isFileSizeStable(newFile) { [weak self] stable in
-                guard let self = self, stable else { return }
-                DispatchQueue.main.async {
-                    self.stopAudioHijack()
-                    self.onRecordingComplete(phoneNumber: phoneNumber, audioPath: newFile)
+            // Wait for file to stabilize (background thread). Keep the poll timer
+            // running until the file is confirmed stable, so a still-growing file
+            // doesn't freeze detection — the next cycle simply re-checks. (restored
+            // pre-rewrite behaviour; the "CR-03" stop-immediately change deadlocked.)
+            DispatchQueue.global().async { [weak self] in
+                guard let self = self else { return }
+                if self.isFileSizeStable(newFile) {
+                    DispatchQueue.main.async {
+                        self.stopPolling()
+                        self.stopAudioHijack()
+                        self.onRecordingComplete(phoneNumber: phoneNumber, audioPath: newFile)
+                    }
                 }
             }
-            return  // skip Audio Hijack state branch this cycle (CR-03)
         }
 
         // Also query Audio Hijack state (writes to /tmp/ah_state.json)
@@ -1297,12 +1305,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
                 guard let self = self else { return }
                 if let newFile = self.findNewRecording(existingFiles: existingFiles) {
-                    self.isFileSizeStable(newFile) { [weak self] stable in
-                        guard let self = self, stable else { return }
-                        DispatchQueue.main.async {
-                            self.stopPolling()
-                            self.onRecordingComplete(phoneNumber: phoneNumber, audioPath: newFile)
-                        }
+                    if self.isFileSizeStable(newFile) {
+                        self.stopPolling()
+                        self.onRecordingComplete(phoneNumber: phoneNumber, audioPath: newFile)
                     }
                 } else {
                     NSLog("CallBridge: No recording file found after session stop")
