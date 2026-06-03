@@ -428,7 +428,17 @@ class BackendSupervisor {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binaryPath)
         proc.currentDirectoryURL = URL(fileURLWithPath: supportDir)
-        proc.environment = ProcessInfo.processInfo.environment
+
+        var env = ProcessInfo.processInfo.environment
+        let credentialKeys = ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY",
+                              "SF_USERNAME", "SF_PASSWORD", "SF_SECURITY_TOKEN", "SF_DOMAIN"]
+        for key in credentialKeys {
+            if let value = KeychainHelper.read(key: key) {
+                env[key] = value
+                debugLog("BackendSupervisor: env key \(key) sourced from Keychain")
+            }
+        }
+        proc.environment = env
 
         // Attach pipes so backend output does not leak to the GUI app's terminal (T-02-09)
         proc.standardOutput = Pipe()
@@ -724,8 +734,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Create recordings directory
         try? FileManager.default.createDirectory(atPath: recordingsDir, withIntermediateDirectories: true)
 
-        // Start supervised backend child process (D-01)
-        backendSupervisor.start()
+        // Gate backend start on credential presence check (D-05, D-06)
+        credentialCheckPassed { [weak self] passed in
+            guard let self = self else { return }
+            if passed {
+                self.backendSupervisor.start()
+            } else {
+                self.pendingBackendStart = true
+                self.showSettings()
+            }
+        }
 
         // Setup menu bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -757,6 +775,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
         }
+    }
+
+    private func credentialCheckPassed(completion: @escaping (Bool) -> Void) {
+        let keys = ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY",
+                    "SF_USERNAME", "SF_PASSWORD", "SF_SECURITY_TOKEN", "SF_DOMAIN"]
+        guard KeychainHelper.allPresent(keys: keys) else {
+            debugLog("credentialCheckPassed: missing Keychain items — showing Settings")
+            completion(false)
+            return
+        }
+        guard let username = KeychainHelper.read(key: "SF_USERNAME"),
+              let password = KeychainHelper.read(key: "SF_PASSWORD"),
+              let token   = KeychainHelper.read(key: "SF_SECURITY_TOKEN"),
+              let url = URL(string: "https://login.salesforce.com/services/Soap/u/58.0") else {
+            completion(false)
+            return
+        }
+        let soapBody = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:enterprise.soap.sforce.com">
+          <soapenv:Body>
+            <urn:login>
+              <urn:username>\(username)</urn:username>
+              <urn:password>\(password)\(token)</urn:password>
+            </urn:login>
+          </soapenv:Body>
+        </soapenv:Envelope>
+        """
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("text/xml; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("\"\"", forHTTPHeaderField: "SOAPAction")
+        request.httpBody = soapBody.data(using: .utf8)
+        request.timeoutInterval = 15
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    debugLog("credentialCheckPassed: SOAP error — \(error.localizedDescription)")
+                    completion(false)
+                    return
+                }
+                guard let data = data,
+                      let body = String(data: data, encoding: .utf8) else {
+                    completion(false)
+                    return
+                }
+                let passed = body.contains("<sessionId>")
+                debugLog("credentialCheckPassed: SOAP login \(passed ? "OK" : "FAILED")")
+                completion(passed)
+            }
+        }.resume()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
