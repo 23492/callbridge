@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WK 2026 Voorspelling — Agent Council</title>
+<style>
+  :root {
+    --bg: #0e1420;
+    --panel: #18202f;
+    --panel-2: #1f2a3d;
+    --border: #2c3a52;
+    --text: #e8edf5;
+    --muted: #93a1b8;
+    --oranje: #ff7a1a;
+    --oranje-soft: rgba(255, 122, 26, 0.14);
+    --gold: #f5c542;
+    --green: #3ecf8e;
+    --red: #ef6a6a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+  }
+  header {
+    background: linear-gradient(135deg, #131b2b 0%, #1a2438 60%, #232f47 100%);
+    border-bottom: 3px solid var(--oranje);
+    padding: 28px 20px 22px;
+    text-align: center;
+  }
+  header h1 { font-size: 1.7rem; letter-spacing: 0.4px; }
+  header h1 .ball { margin-right: 8px; }
+  header .sub { color: var(--muted); margin-top: 6px; font-size: 0.95rem; }
+  nav {
+    display: flex; flex-wrap: wrap; justify-content: center; gap: 6px;
+    padding: 12px 16px; background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  nav button {
+    background: transparent; color: var(--muted); border: 1px solid transparent;
+    padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 0.95rem;
+    font-weight: 600;
+  }
+  nav button:hover { color: var(--text); background: var(--panel-2); }
+  nav button.active { color: var(--oranje); background: var(--oranje-soft); border-color: var(--oranje); }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 80px; }
+  section.tab { display: none; }
+  section.tab.active { display: block; animation: fadeIn 0.25s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  h2 { font-size: 1.35rem; margin: 18px 0 12px; }
+  h3 { font-size: 1.05rem; margin: 14px 0 8px; color: var(--gold); }
+  p.lead { color: var(--muted); margin-bottom: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px 18px; margin-bottom: 14px;
+  }
+  .card.accent { border-color: var(--oranje); background: linear-gradient(180deg, var(--oranje-soft), var(--panel)); }
+  .champion-banner {
+    text-align: center; padding: 30px 18px; border-radius: 14px;
+    background: radial-gradient(ellipse at top, rgba(245,197,66,0.18), transparent 65%), var(--panel);
+    border: 1px solid var(--gold); margin-bottom: 18px;
+  }
+  .champion-banner .trophy { font-size: 3rem; }
+  .champion-banner .name { font-size: 2.1rem; font-weight: 800; color: var(--gold); margin-top: 4px; }
+  .champion-banner .final { color: var(--muted); margin-top: 6px; font-size: 1.05rem; }
+  .grid { display: grid; gap: 14px; }
+  .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.5px; }
+  tr:last-child td { border-bottom: none; }
+  tr.advance td:first-child { border-left: 3px solid var(--green); }
+  tr.third td:first-child { border-left: 3px solid var(--gold); }
+  tr.out { opacity: 0.55; }
+  tr.oranje-row { background: var(--oranje-soft); }
+  .badge {
+    display: inline-block; font-size: 0.72rem; font-weight: 700; padding: 2px 8px;
+    border-radius: 999px; vertical-align: middle; margin-left: 6px;
+  }
+  .badge.green { background: rgba(62,207,142,0.15); color: var(--green); }
+  .badge.gold { background: rgba(245,197,66,0.15); color: var(--gold); }
+  .badge.red { background: rgba(239,106,106,0.15); color: var(--red); }
+  .badge.orange { background: var(--oranje-soft); color: var(--oranje); }
+  .group-note { color: var(--muted); font-size: 0.88rem; margin-top: 10px; }
+  /* Bracket */
+  .bracket-wrap { overflow-x: auto; padding-bottom: 10px; }
+  .bracket { display: flex; gap: 18px; min-width: 1000px; align-items: stretch; }
+  .round { display: flex; flex-direction: column; justify-content: space-around; gap: 10px; flex: 1; min-width: 170px; }
+  .round h4 { text-align: center; color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 4px; }
+  .match {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 10px; cursor: pointer; font-size: 0.86rem; transition: border-color 0.15s;
+  }
+  .match:hover { border-color: var(--oranje); }
+  .match .team { display: flex; justify-content: space-between; padding: 2px 0; }
+  .match .team.winner { font-weight: 700; color: var(--gold); }
+  .match .team.loser { opacity: 0.6; }
+  .match .team.nl { color: var(--oranje); }
+  .match .note { display: none; color: var(--muted); font-size: 0.8rem; margin-top: 6px; border-top: 1px dashed var(--border); padding-top: 6px; }
+  .match.open .note { display: block; }
+  .scoreline { color: var(--muted); font-variant-numeric: tabular-nums; margin-left: 8px; }
+  /* NL path */
+  .path { display: flex; flex-direction: column; gap: 0; margin-top: 10px; }
+  .path-step { display: flex; gap: 14px; }
+  .path-step .marker { display: flex; flex-direction: column; align-items: center; }
+  .path-step .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--oranje); margin-top: 4px; flex-shrink: 0; }
+  .path-step .dot.loss { background: var(--red); }
+  .path-step .line { width: 2px; flex: 1; background: var(--border); }
+  .path-step:last-child .line { display: none; }
+  .path-step .content { padding-bottom: 18px; }
+  .path-step .round-name { font-size: 0.78rem; text-transform: uppercase; color: var(--muted); letter-spacing: 0.5px; }
+  .path-step .fixture { font-weight: 700; }
+  .path-step .why { color: var(--muted); font-size: 0.88rem; }
+  /* Scorito */
+  .pos-block h3 { margin-top: 0; }
+  ul.clean { list-style: none; }
+  ul.clean li { padding: 5px 0; border-bottom: 1px solid var(--border); }
+  ul.clean li:last-child { border-bottom: none; }
+  .pick-meta { color: var(--muted); font-size: 0.85rem; }
+  footer { text-align: center; color: var(--muted); font-size: 0.8rem; padding: 24px 16px; border-top: 1px solid var(--border); }
+  @media (max-width: 640px) {
+    header h1 { font-size: 1.25rem; }
+    .champion-banner .name { font-size: 1.6rem; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1><span class="ball">⚽</span>WK 2026 — De Grote Voorspelling</h1>
+  <div class="sub" id="header-sub"></div>
+</header>
+<nav id="nav"></nav>
+<main id="main"></main>
+<footer id="footer"></footer>
+
+<script>
+// ============================================================
+// FORECAST DATA — gevuld door de agent council (zie commit log)
+// ============================================================
+const FORECAST = window.__FORECAST_DATA__ = {
+  meta: { generatedAt: "", subtitle: "", disclaimer: "" },
+  verdict: { champion: "", championFlag: "", runnerUp: "", finalScore: "", summary: "", keyArguments: [] },
+  favorites: [],            // { team, flag, odds, endStation, analysis }
+  groups: [],               // { letter, analysis, teams: [{ name, flag, pos, pts, status: "advance"|"third"|"out", nl?: true }] }
+  bestThirds: [],           // [{ team, flag, advances: bool }]
+  bracket: { r32: [], r16: [], qf: [], sf: [], thirdPlace: null, final: null },
+                            // match: { label, home, homeFlag, away, awayFlag, score, winner, note }
+  netherlands: { group: "", finish: "", summary: "", squadNotes: "", path: [] },
+                            // path step: { round, fixture, result, win: bool, why }
+  topscorers: [],           // { rank, player, team, flag, goals, note }
+  awards: [],               // { title, winner, team, why }
+  scoritoRules: "",
+  scorito: { strategy: [], captain: "", picks: { Keepers: [], Verdedigers: [], Middenvelders: [], Aanvallers: [] } }
+                            // pick: { player, team, flag, why }
+};
+
+// ============================================================
+// RENDERING
+// ============================================================
+const TABS = [
+  ["verdict", "🏆 Verdict"],
+  ["poules", "📋 Poules"],
+  ["bracket", "🗺️ Bracket"],
+  ["nederland", "🇳🇱 Nederland"],
+  ["topscorers", "🥇 Topscorers & Prijzen"],
+  ["scorito", "🎯 Scorito-advies"],
+];
+
+function el(tag, attrs = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") node.className = v;
+    else if (k === "html") node.innerHTML = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v);
+  }
+  for (const c of [].concat(children)) {
+    if (c == null) continue;
+    node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  }
+  return node;
+}
+
+function renderNav() {
+  const nav = document.getElementById("nav");
+  TABS.forEach(([id, label], i) => {
+    nav.appendChild(el("button", {
+      class: i === 0 ? "active" : "",
+      "data-tab": id,
+      onclick: () => switchTab(id),
+    }, label));
+  });
+}
+
+function switchTab(id) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
+  document.querySelectorAll("section.tab").forEach(s => s.classList.toggle("active", s.id === "tab-" + id));
+}
+
+function renderVerdict() {
+  const v = FORECAST.verdict;
+  const sec = el("section", { class: "tab active", id: "tab-verdict" });
+  sec.appendChild(el("div", { class: "champion-banner" }, [
+    el("div", { class: "trophy" }, "🏆"),
+    el("div", { class: "name" }, `${v.championFlag} ${v.champion}`),
+    el("div", { class: "final" }, `Finale: ${v.champion} – ${v.runnerUp} · ${v.finalScore}`),
+  ]));
+  sec.appendChild(el("div", { class: "card accent" }, [
+    el("h3", {}, "Het oordeel van de council"),
+    el("p", { html: v.summary }),
+  ]));
+  if (v.keyArguments.length) {
+    const ul = el("ul", { class: "clean" }, v.keyArguments.map(a => el("li", { html: "✅ " + a })));
+    sec.appendChild(el("div", { class: "card" }, [el("h3", {}, "Kernargumenten"), ul]));
+  }
+  if (FORECAST.favorites.length) {
+    sec.appendChild(el("h2", {}, "De favorieten gewogen"));
+    const grid = el("div", { class: "grid cols-2" });
+    FORECAST.favorites.forEach(f => {
+      grid.appendChild(el("div", { class: "card" }, [
+        el("h3", {}, `${f.flag} ${f.team}`),
+        el("p", { class: "pick-meta" }, `Odds: ${f.odds} · Eindstation: ${f.endStation}`),
+        el("p", { html: f.analysis }),
+      ]));
+    });
+    sec.appendChild(grid);
+  }
+  return sec;
+}
+
+function renderPoules() {
+  const sec = el("section", { class: "tab", id: "tab-poules" });
+  sec.appendChild(el("p", { class: "lead" }, "Voorspelde eindstanden per poule. Groen = direct door (top 2), goud = door als beste nummer 3, grijs = uitgeschakeld."));
+  const grid = el("div", { class: "grid cols-2" });
+  FORECAST.groups.forEach(g => {
+    const tbl = el("table");
+    tbl.appendChild(el("tr", {}, [el("th", {}, "#"), el("th", {}, "Land"), el("th", {}, "Pnt")]));
+    g.teams.forEach(t => {
+      const cls = [t.status === "advance" ? "advance" : t.status === "third" ? "third" : "out", t.nl ? "oranje-row" : ""].join(" ").trim();
+      tbl.appendChild(el("tr", { class: cls }, [
+        el("td", {}, String(t.pos)),
+        el("td", {}, `${t.flag} ${t.name}`),
+        el("td", {}, String(t.pts)),
+      ]));
+    });
+    grid.appendChild(el("div", { class: "card" }, [
+      el("h3", {}, `Poule ${g.letter}`),
+      tbl,
+      el("div", { class: "group-note", html: g.analysis }),
+    ]));
+  });
+  sec.appendChild(grid);
+  if (FORECAST.bestThirds.length) {
+    const list = FORECAST.bestThirds.map(t =>
+      el("span", { class: "badge " + (t.advances ? "gold" : "red"), style: "margin:3px;" }, `${t.flag} ${t.team}`));
+    sec.appendChild(el("div", { class: "card" }, [
+      el("h3", {}, "Beste nummers 3 (8 van 12 gaan door)"),
+      el("div", {}, list),
+    ]));
+  }
+  return sec;
+}
+
+function matchCard(m) {
+  const card = el("div", { class: "match", onclick: () => card.classList.toggle("open") });
+  card.appendChild(el("div", { style: "color:var(--muted);font-size:0.72rem;" }, m.label || ""));
+  [[m.home, m.homeFlag], [m.away, m.awayFlag]].forEach(([team, flag]) => {
+    const isWinner = team === m.winner;
+    const isNL = team === "Nederland";
+    card.appendChild(el("div", { class: `team ${isWinner ? "winner" : "loser"} ${isNL ? "nl" : ""}` }, [
+      el("span", {}, `${flag} ${team}`),
+      isWinner ? el("span", {}, "✓") : el("span", {}, ""),
+    ]));
+  });
+  card.appendChild(el("div", { style: "color:var(--muted);font-size:0.8rem;margin-top:2px;" }, m.score || ""));
+  if (m.note) card.appendChild(el("div", { class: "note", html: m.note }));
+  return card;
+}
+
+function renderBracket() {
+  const sec = el("section", { class: "tab", id: "tab-bracket" });
+  sec.appendChild(el("p", { class: "lead" }, "Klik op een wedstrijd voor de onderbouwing van de council."));
+  const wrap = el("div", { class: "bracket-wrap" });
+  const bracket = el("div", { class: "bracket" });
+  const rounds = [
+    ["Ronde van 32", FORECAST.bracket.r32],
+    ["Achtste finales", FORECAST.bracket.r16],
+    ["Kwartfinales", FORECAST.bracket.qf],
+    ["Halve finales", FORECAST.bracket.sf],
+    ["Finale", [FORECAST.bracket.final, FORECAST.bracket.thirdPlace].filter(Boolean)],
+  ];
+  rounds.forEach(([name, matches]) => {
+    const col = el("div", { class: "round" });
+    col.appendChild(el("h4", {}, name));
+    (matches || []).forEach(m => col.appendChild(matchCard(m)));
+    bracket.appendChild(col);
+  });
+  wrap.appendChild(bracket);
+  sec.appendChild(wrap);
+  return sec;
+}
+
+function renderNederland() {
+  const nl = FORECAST.netherlands;
+  const sec = el("section", { class: "tab", id: "tab-nederland" });
+  sec.appendChild(el("div", { class: "card accent" }, [
+    el("h3", {}, `🇳🇱 Eindstation: ${nl.finish}`),
+    el("p", { html: nl.summary }),
+  ]));
+  if (nl.squadNotes) {
+    sec.appendChild(el("div", { class: "card" }, [el("h3", {}, "Selectie & vorm"), el("p", { html: nl.squadNotes })]));
+  }
+  if (nl.path.length) {
+    sec.appendChild(el("h2", {}, "Het pad van Oranje"));
+    const path = el("div", { class: "path" });
+    nl.path.forEach(step => {
+      path.appendChild(el("div", { class: "path-step" }, [
+        el("div", { class: "marker" }, [el("div", { class: "dot" + (step.win ? "" : " loss") }), el("div", { class: "line" })]),
+        el("div", { class: "content" }, [
+          el("div", { class: "round-name" }, step.round),
+          el("div", { class: "fixture" }, `${step.fixture} — ${step.result}`),
+          el("div", { class: "why", html: step.why }),
+        ]),
+      ]));
+    });
+    sec.appendChild(el("div", { class: "card" }, [path]));
+  }
+  return sec;
+}
+
+function renderTopscorers() {
+  const sec = el("section", { class: "tab", id: "tab-topscorers" });
+  sec.appendChild(el("h2", {}, "🥇 Gouden Schoen — top 5"));
+  const tbl = el("table");
+  tbl.appendChild(el("tr", {}, [el("th", {}, "#"), el("th", {}, "Speler"), el("th", {}, "Land"), el("th", {}, "Goals"), el("th", {}, "Waarom")]));
+  FORECAST.topscorers.forEach(t => {
+    tbl.appendChild(el("tr", { class: t.rank === 1 ? "advance" : "" }, [
+      el("td", {}, String(t.rank)),
+      el("td", {}, t.player),
+      el("td", {}, `${t.flag} ${t.team}`),
+      el("td", {}, String(t.goals)),
+      el("td", { html: t.note }),
+    ]));
+  });
+  sec.appendChild(el("div", { class: "card" }, [tbl]));
+  if (FORECAST.awards.length) {
+    sec.appendChild(el("h2", {}, "Individuele prijzen"));
+    const grid = el("div", { class: "grid cols-3" });
+    FORECAST.awards.forEach(a => {
+      grid.appendChild(el("div", { class: "card" }, [
+        el("h3", {}, a.title),
+        el("p", {}, `${a.winner} (${a.team})`),
+        el("p", { class: "pick-meta", html: a.why }),
+      ]));
+    });
+    sec.appendChild(grid);
+  }
+  return sec;
+}
+
+function renderScorito() {
+  const s = FORECAST.scorito;
+  const sec = el("section", { class: "tab", id: "tab-scorito" });
+  if (FORECAST.scoritoRules) {
+    sec.appendChild(el("div", { class: "card" }, [el("h3", {}, "Spelregels in het kort"), el("p", { html: FORECAST.scoritoRules })]));
+  }
+  if (s.captain) {
+    sec.appendChild(el("div", { class: "card accent" }, [el("h3", {}, "⭐ Kapitein"), el("p", { html: s.captain })]));
+  }
+  const grid = el("div", { class: "grid cols-2" });
+  Object.entries(s.picks).forEach(([pos, picks]) => {
+    if (!picks.length) return;
+    const ul = el("ul", { class: "clean" }, picks.map(p =>
+      el("li", {}, [
+        el("strong", {}, `${p.flag} ${p.player}`),
+        el("span", { class: "pick-meta" }, ` (${p.team}) — `),
+        el("span", { class: "pick-meta", html: p.why }),
+      ])));
+    grid.appendChild(el("div", { class: "card pos-block" }, [el("h3", {}, pos), ul]));
+  });
+  sec.appendChild(grid);
+  if (s.strategy.length) {
+    sec.appendChild(el("div", { class: "card" }, [
+      el("h3", {}, "Ronde-strategie"),
+      el("ul", { class: "clean" }, s.strategy.map(x => el("li", { html: "🔁 " + x }))),
+    ]));
+  }
+  return sec;
+}
+
+function renderAll() {
+  document.getElementById("header-sub").textContent = FORECAST.meta.subtitle;
+  document.getElementById("footer").textContent = FORECAST.meta.disclaimer + " · Gegenereerd: " + FORECAST.meta.generatedAt;
+  renderNav();
+  const main = document.getElementById("main");
+  main.appendChild(renderVerdict());
+  main.appendChild(renderPoules());
+  main.appendChild(renderBracket());
+  main.appendChild(renderNederland());
+  main.appendChild(renderTopscorers());
+  main.appendChild(renderScorito());
+}
+
+renderAll();
+</script>
+</body>
+</html>
