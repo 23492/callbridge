@@ -7,7 +7,7 @@ import Security
 
 // MARK: - Version & Update Config
 
-let appVersion = "2.0.3"
+let appVersion = "2.0.4"
 let updateManifestURL = "https://raw.githubusercontent.com/23492/callbridge/main/callbridge-update.json"
 let updatePublicKey = "ylneUBx4bMQxiX9rsDkKtya1InBHUzlbfsEOwpvFA2E="
 
@@ -467,16 +467,13 @@ class BackendSupervisor {
             debugLog("BackendSupervisor: Process exited with status \(status)")
             if self.isStopping { return }
 
-            // Port-in-use heuristic (D-14): if this was the first spawn attempt and
-            // the process exited very quickly, assume port 8765 is already in use.
+            // Fast exit on the first spawn = something already holds :8765 (typically
+            // an orphaned backend from an ungraceful exit). Reclaim the port and retry
+            // instead of giving up permanently — this is the self-heal for "port in use".
             let elapsed = Date().timeIntervalSince(self.spawnTime)
             if self.restartCount == 0 && elapsed < 3.0 {
-                debugLog("BackendSupervisor: Fast exit (\(elapsed)s) on first spawn — port 8765 likely in use")
-                DispatchQueue.main.async {
-                    self.showNotification(title: "CallBridge", message: "Poort 8765 al in gebruik")
-                }
-                self.isStopping = true
-                return
+                debugLog("BackendSupervisor: Fast exit (\(elapsed)s) on first spawn — reclaiming :8765 and retrying")
+                self.reclaimPort()
             }
 
             self.scheduleRestart()
@@ -556,6 +553,57 @@ class BackendSupervisor {
             }
             debugLog("BackendSupervisor: Backend stopped")
         }
+    }
+
+    private var isHealing = false
+
+    /// Self-heal: if /health doesn't answer, reclaim :8765 from any orphan and
+    /// (re)spawn the backend. Idempotent. Runs synchronously — call OFF the main thread.
+    func ensureRunning() {
+        guard !isHealing else { return }
+        isHealing = true
+        defer { isHealing = false }
+
+        if healthCheckSync(timeout: 1.0) { return }   // backend already fine — no-op
+        debugLog("BackendSupervisor: ensureRunning — backend unhealthy, reclaiming :8765 + restarting")
+        isStopping = true
+        if let p = process, p.isRunning { kill(p.processIdentifier, SIGKILL) }
+        process = nil
+        reclaimPort()
+        isStopping = false
+        restartCount = 0
+        spawn()
+        // Block briefly so overlapping callers don't double-spawn during startup.
+        for _ in 0..<12 {
+            if healthCheckSync(timeout: 0.5) { break }
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+    }
+
+    /// Kill whatever is LISTENING on :8765 (an orphaned backend from an ungraceful
+    /// exit). Targets the listener only, so the GUI's own client connection — which is
+    /// not in the LISTEN state — is never killed.
+    private func reclaimPort() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", "pids=$(/usr/sbin/lsof -nP -iTCP:8765 -sTCP:LISTEN -t); [ -n \"$pids\" ] && kill -9 $pids"]
+        try? p.run()
+        p.waitUntilExit()
+        debugLog("BackendSupervisor: reclaimPort — freed :8765 (exit \(p.terminationStatus))")
+    }
+
+    private func healthCheckSync(timeout: TimeInterval) -> Bool {
+        guard let url = URL(string: "http://localhost:8765/health") else { return false }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if error == nil, let http = response as? HTTPURLResponse, http.statusCode == 200 { ok = true }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + timeout + 0.3)
+        return ok
     }
 
     private func showNotification(title: String, message: String) {
@@ -730,7 +778,7 @@ struct SettingsView: View {
 
 // MARK: - App Delegate
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     let serverURL = "http://localhost:8765"
     let phoneAppBundleID = "com.apple.mobilephone"
@@ -777,13 +825,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Setup menu bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateStatusIcon()
+        // Persistent status-bar menu. Its contents are refreshed on demand via
+        // menuNeedsUpdate(_:) — i.e. ONLY when the user opens it — so there is no
+        // continuous background polling burning resources.
+        let statusMenu = NSMenu()
+        statusMenu.delegate = self
+        statusItem.menu = statusMenu
         rebuildMenu()
-
-        // Fetch status immediately, then poll every 5 seconds
-        fetchStatus()
-        statusTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            self?.fetchStatus()
-        }
 
         // Register for URL events
         let em = NSAppleEventManager.shared()
@@ -922,37 +970,56 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Status Polling & Menu
 
-    func fetchStatus() {
-        guard let url = URL(string: "\(serverURL)/status") else { return }
+    // MARK: - NSMenuDelegate — fetch status on demand (only when the menu opens)
 
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 3
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                if let error = error {
-                    debugLog("fetchStatus error: \(error.localizedDescription)")
-                    self.serverReachable = false
-                    self.lastStatus = nil
-                } else if let data = data,
-                          let status = try? JSONDecoder().decode(StatusResponse.self, from: data) {
-                    debugLog("fetchStatus OK — processing: \(status.processing.count), completed: \(status.completed.count)")
-                    self.serverReachable = true
-                    self.lastStatus = status
-                } else {
-                    let raw = String(data: data ?? Data(), encoding: .utf8) ?? "nil"
-                    debugLog("fetchStatus decode failed, data: \(raw)")
-                    self.serverReachable = false
-                    self.lastStatus = nil
-                }
-                self.rebuildMenu()
+    /// Called by AppKit right before the status-bar menu is displayed. We fetch the
+    /// backend status synchronously here so the menu always opens with fresh data,
+    /// without any continuous background polling. If the backend doesn't answer we
+    /// trigger a background self-heal; the next open reflects the recovered state.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let ok = fetchStatusSync(timeout: 1.0)
+        serverReachable = ok
+        if !ok {
+            lastStatus = nil
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.backendSupervisor.ensureRunning()
             }
+        }
+        rebuildMenu()
+    }
+
+    /// Synchronously fetch /status with a short timeout. Safe to call on the main
+    /// thread from menuNeedsUpdate: the URLSession completion runs on its own queue,
+    /// so the semaphore never deadlocks. Returns true on a decodable response.
+    @discardableResult
+    func fetchStatusSync(timeout: TimeInterval) -> Bool {
+        guard let url = URL(string: "\(serverURL)/status") else { return false }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = timeout
+        let sem = DispatchSemaphore(value: 0)
+        var fetched: StatusResponse?
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error = error {
+                debugLog("fetchStatusSync error: \(error.localizedDescription)")
+            } else if let data = data,
+                      let status = try? JSONDecoder().decode(StatusResponse.self, from: data) {
+                fetched = status
+            } else {
+                debugLog("fetchStatusSync decode failed")
+            }
+            sem.signal()
         }.resume()
+        _ = sem.wait(timeout: .now() + timeout + 0.3)
+        if let fetched = fetched {
+            lastStatus = fetched
+            debugLog("fetchStatusSync OK — processing: \(fetched.processing.count), completed: \(fetched.completed.count)")
+        }
+        return fetched != nil
     }
 
     func rebuildMenu() {
-        let menu = NSMenu()
+        guard let menu = statusItem?.menu else { return }
+        menu.removeAllItems()
         debugLog("rebuildMenu — reachable: \(serverReachable), processing: \(lastStatus?.processing.count ?? -1), completed: \(lastStatus?.completed.count ?? -1)")
 
         // Header
@@ -962,7 +1029,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         guard serverReachable else {
-            let item = NSMenuItem(title: "Server niet bereikbaar", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: "Server niet bereikbaar — probeert te herstellen…", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
             menu.addItem(NSMenuItem.separator())
@@ -970,7 +1037,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             settingsItem.target = self
             menu.addItem(settingsItem)
             menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-            statusItem.menu = menu
             return
         }
 
@@ -1056,7 +1122,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         settingsMenuItem.target = self
         menu.addItem(settingsMenuItem)
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        statusItem.menu = menu
     }
 
     @objc func showSettings() {
