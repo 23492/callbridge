@@ -8,19 +8,10 @@
 <title>WK 2026 — De Grote Voorspelling</title>
 <style>
   :root {
-    --bg0: #070b14;
-    --card: rgba(255,255,255,.045);
-    --card-brd: rgba(255,255,255,.09);
-    --text: #eef2fa;
-    --soft: #c2cbdc;
-    --muted: #8e9bb5;
-    --oranje: #ff6b1a;
-    --gold: #ffc83d;
-    --teal: #2dd4bf;
-    --green: #34d399;
-    --red: #f87171;
-    --top-off: 58px;
-    --radius: 18px;
+    --bg0: #070b14; --card: rgba(255,255,255,.045); --card-brd: rgba(255,255,255,.09);
+    --text: #eef2fa; --soft: #c2cbdc; --muted: #8e9bb5;
+    --oranje: #ff6b1a; --gold: #ffc83d; --teal: #2dd4bf; --green: #34d399; --red: #f87171;
+    --top-off: 58px; --radius: 18px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { scroll-behavior: smooth; }
@@ -33,9 +24,7 @@
     background-attachment: fixed;
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    -webkit-tap-highlight-color: transparent;
+    line-height: 1.6; -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
     min-height: 100dvh;
   }
   .pitch-lines {
@@ -44,18 +33,15 @@
       radial-gradient(circle at 50% 34%, transparent 117px, #fff 118px, #fff 120px, transparent 121px),
       linear-gradient(#fff, #fff) 0 34% / 100% 2px no-repeat;
   }
+  .vh { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 
-  /* ── App bar ───────────────────────────────────────────── */
   .appbar {
     position: sticky; top: 0; z-index: 30;
     background: rgba(7,11,20,.78);
     backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
     border-bottom: 1px solid rgba(255,255,255,.06);
   }
-  .appbar-inner {
-    max-width: 1080px; margin: 0 auto;
-    display: flex; align-items: center; gap: 10px; padding: 9px 16px;
-  }
+  .appbar-inner { max-width: 1080px; margin: 0 auto; display: flex; align-items: center; gap: 10px; padding: 9px 16px; }
   .logo { font-size: 1.45rem; filter: drop-shadow(0 0 8px rgba(255,200,61,.45)); }
   .appbar-text strong { display: block; font-size: .95rem; letter-spacing: .05em; }
   .appbar-text small { display: block; font-size: .65rem; color: var(--muted); max-width: 56vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -65,7 +51,6 @@
     padding: 4px 11px; border-radius: 999px; white-space: nowrap;
   }
 
-  /* ── Navigatie: bottom bar op mobiel, top pills op desktop ── */
   nav {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
     display: flex; justify-content: space-around;
@@ -74,71 +59,70 @@
     border-top: 1px solid rgba(255,255,255,.08);
     padding: 5px max(8px, env(safe-area-inset-left)) calc(5px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-right));
   }
-  nav button {
-    appearance: none; background: none; border: 0; cursor: pointer;
-    display: flex; flex-direction: column; align-items: center; gap: 2px;
-    color: var(--muted); font: inherit; font-size: .6rem; font-weight: 600; letter-spacing: .02em;
+  nav label {
+    display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer;
+    color: var(--muted); font-size: .6rem; font-weight: 600; letter-spacing: .02em;
     padding: 6px 6px; border-radius: 12px; min-width: 46px; min-height: 44px;
-    transition: color .2s;
+    transition: color .2s; user-select: none;
   }
-  nav button .ico { font-size: 1.3rem; line-height: 1.15; transition: transform .18s; }
-  nav button.active { color: var(--oranje); }
-  nav button.active .ico { transform: translateY(-2px) scale(1.08); }
-  nav button:active .ico { transform: scale(.88); }
+  nav label .ico { font-size: 1.3rem; line-height: 1.15; transition: transform .18s; }
+  nav label:active .ico { transform: scale(.88); }
+#t-verdict:checked ~ main #tab-verdict{display:block;animation:rise .3s ease}
+#t-verdict:checked ~ nav label[for="t-verdict"]{color:var(--oranje)}
+#t-verdict:checked ~ nav label[for="t-verdict"] .ico{transform:translateY(-2px) scale(1.08)}
+#t-poules:checked ~ main #tab-poules{display:block;animation:rise .3s ease}
+#t-poules:checked ~ nav label[for="t-poules"]{color:var(--oranje)}
+#t-poules:checked ~ nav label[for="t-poules"] .ico{transform:translateY(-2px) scale(1.08)}
+#t-bracket:checked ~ main #tab-bracket{display:block;animation:rise .3s ease}
+#t-bracket:checked ~ nav label[for="t-bracket"]{color:var(--oranje)}
+#t-bracket:checked ~ nav label[for="t-bracket"] .ico{transform:translateY(-2px) scale(1.08)}
+#t-nederland:checked ~ main #tab-nederland{display:block;animation:rise .3s ease}
+#t-nederland:checked ~ nav label[for="t-nederland"]{color:var(--oranje)}
+#t-nederland:checked ~ nav label[for="t-nederland"] .ico{transform:translateY(-2px) scale(1.08)}
+#t-topscorers:checked ~ main #tab-topscorers{display:block;animation:rise .3s ease}
+#t-topscorers:checked ~ nav label[for="t-topscorers"]{color:var(--oranje)}
+#t-topscorers:checked ~ nav label[for="t-topscorers"] .ico{transform:translateY(-2px) scale(1.08)}
+#t-scorito:checked ~ main #tab-scorito{display:block;animation:rise .3s ease}
+#t-scorito:checked ~ nav label[for="t-scorito"]{color:var(--oranje)}
+#t-scorito:checked ~ nav label[for="t-scorito"] .ico{transform:translateY(-2px) scale(1.08)}
 
-  main {
-    position: relative; z-index: 1;
-    max-width: 1080px; margin: 0 auto;
-    padding: 16px 16px calc(92px + env(safe-area-inset-bottom));
-  }
-  footer {
-    position: relative; z-index: 1; text-align: center;
-    color: var(--muted); font-size: .74rem;
-    padding: 8px 20px calc(96px + env(safe-area-inset-bottom));
-    max-width: 720px; margin: 0 auto;
-  }
+  main { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; padding: 16px 16px calc(92px + env(safe-area-inset-bottom)); }
+  footer { position: relative; z-index: 1; text-align: center; color: var(--muted); font-size: .74rem; padding: 8px 20px calc(96px + env(safe-area-inset-bottom)); max-width: 720px; margin: 0 auto; }
 
   @media (min-width: 768px) {
     :root { --top-off: 112px; }
-    nav {
-      position: sticky; top: 53px; bottom: auto;
-      justify-content: center; gap: 6px;
-      border-top: 0; border-bottom: 1px solid rgba(255,255,255,.07);
-      padding: 8px 16px;
-    }
-    nav button { flex-direction: row; gap: 8px; font-size: .85rem; padding: 9px 16px; min-height: 0; }
-    nav button .ico { font-size: 1.05rem; }
-    nav button.active { background: rgba(255,107,26,.12); }
-    nav button.active .ico { transform: none; }
+    nav { position: sticky; top: 53px; bottom: auto; justify-content: center; gap: 6px; border-top: 0; border-bottom: 1px solid rgba(255,255,255,.07); padding: 8px 16px; }
+    nav label { flex-direction: row; gap: 8px; font-size: .85rem; padding: 9px 16px; min-height: 0; }
+    nav label .ico { font-size: 1.05rem; }
+#t-verdict:checked ~ nav label[for="t-verdict"]{background:rgba(255,107,26,.12)}
+#t-verdict:checked ~ nav label[for="t-verdict"] .ico{transform:none}
+#t-poules:checked ~ nav label[for="t-poules"]{background:rgba(255,107,26,.12)}
+#t-poules:checked ~ nav label[for="t-poules"] .ico{transform:none}
+#t-bracket:checked ~ nav label[for="t-bracket"]{background:rgba(255,107,26,.12)}
+#t-bracket:checked ~ nav label[for="t-bracket"] .ico{transform:none}
+#t-nederland:checked ~ nav label[for="t-nederland"]{background:rgba(255,107,26,.12)}
+#t-nederland:checked ~ nav label[for="t-nederland"] .ico{transform:none}
+#t-topscorers:checked ~ nav label[for="t-topscorers"]{background:rgba(255,107,26,.12)}
+#t-topscorers:checked ~ nav label[for="t-topscorers"] .ico{transform:none}
+#t-scorito:checked ~ nav label[for="t-scorito"]{background:rgba(255,107,26,.12)}
+#t-scorito:checked ~ nav label[for="t-scorito"] .ico{transform:none}
     main { padding-bottom: 60px; }
     footer { padding-bottom: 36px; }
   }
 
-  /* ── Bouwstenen ────────────────────────────────────────── */
   section.tab { display: none; }
-  section.tab.active { display: block; animation: rise .3s ease; }
   @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-  .card {
-    background: var(--card); border: 1px solid var(--card-brd);
-    border-radius: var(--radius); padding: 17px 18px; margin-bottom: 13px;
-  }
-  .card.accent {
-    border-color: rgba(255,107,26,.4);
-    background: linear-gradient(160deg, rgba(255,107,26,.13), rgba(255,107,26,.02) 55%), var(--card);
-  }
-  .card.goldc {
-    border-color: rgba(255,200,61,.35);
-    background: linear-gradient(160deg, rgba(255,200,61,.1), transparent 60%), var(--card);
-  }
+  .card { background: var(--card); border: 1px solid var(--card-brd); border-radius: var(--radius); padding: 17px 18px; margin-bottom: 13px; }
+  .card.accent { border-color: rgba(255,107,26,.4); background: linear-gradient(160deg, rgba(255,107,26,.13), rgba(255,107,26,.02) 55%), var(--card); }
+  .card.goldc { border-color: rgba(255,200,61,.35); background: linear-gradient(160deg, rgba(255,200,61,.1), transparent 60%), var(--card); }
   h2.section { font-size: 1.12rem; margin: 26px 0 12px; display: flex; align-items: center; gap: 9px; }
   h2.section::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, rgba(255,255,255,.16), transparent); }
   h3 { font-size: 1rem; margin-bottom: 8px; color: var(--gold); }
   .lead { color: var(--muted); font-size: .9rem; margin-bottom: 14px; }
   .bodytext { font-size: .92rem; color: var(--soft); }
 
-  /* ── Hero (verdict) ────────────────────────────────────── */
   .hero {
     position: relative; text-align: center; overflow: hidden;
     padding: 34px 18px 26px; margin-bottom: 16px;
@@ -154,29 +138,17 @@
     font-size: clamp(2.4rem, 12vw, 3.8rem); font-weight: 900; letter-spacing: -.02em; line-height: 1.08;
     background: linear-gradient(180deg, #fff 30%, #ffd96b); -webkit-background-clip: text; background-clip: text; color: transparent;
   }
-  .hero .chip {
-    display: inline-block; margin-top: 10px; font-size: .74rem; font-weight: 800;
-    color: #221703; background: linear-gradient(135deg, var(--gold), #ffaa2b);
-    padding: 6px 15px; border-radius: 999px; letter-spacing: .04em;
-  }
+  .hero .chip { display: inline-block; margin-top: 10px; font-size: .74rem; font-weight: 800; color: #221703; background: linear-gradient(135deg, var(--gold), #ffaa2b); padding: 6px 15px; border-radius: 999px; letter-spacing: .04em; }
   .scoreline { display: flex; justify-content: center; align-items: center; gap: 14px; margin-top: 20px; }
   .scoreline .t { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: .82rem; font-weight: 700; min-width: 72px; }
   .scoreline .t .f { font-size: 1.7rem; }
-  .scoreline .sc {
-    font-size: 1.45rem; font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: .04em;
-    background: rgba(255,255,255,.07); border: 1px solid var(--card-brd);
-    padding: 5px 16px; border-radius: 13px;
-  }
+  .scoreline .sc { font-size: 1.45rem; font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: .04em; background: rgba(255,255,255,.07); border: 1px solid var(--card-brd); padding: 5px 16px; border-radius: 13px; }
   .hero .meta { margin-top: 11px; color: var(--muted); font-size: .76rem; letter-spacing: .04em; }
 
   ol.args { list-style: none; counter-reset: a; }
   ol.args li { counter-increment: a; position: relative; padding: 10px 0 10px 42px; border-bottom: 1px dashed rgba(255,255,255,.08); font-size: .9rem; color: var(--soft); }
   ol.args li:last-child { border-bottom: 0; padding-bottom: 2px; }
-  ol.args li::before {
-    content: counter(a, decimal-leading-zero);
-    position: absolute; left: 0; top: 10px;
-    font-weight: 800; color: var(--gold); font-size: .92rem; opacity: .95;
-  }
+  ol.args li::before { content: counter(a, decimal-leading-zero); position: absolute; left: 0; top: 10px; font-weight: 800; color: var(--gold); font-size: .92rem; opacity: .95; }
 
   .fav { display: grid; gap: 12px; }
   @media (min-width: 680px) { .fav { grid-template-columns: 1fr 1fr; } }
@@ -190,14 +162,12 @@
   .endchip.nl { background: rgba(255,107,26,.15); color: var(--oranje); }
   .fav p { font-size: .87rem; color: var(--soft); }
 
-  /* ── Poules ────────────────────────────────────────────── */
   .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; font-size: .72rem; color: var(--muted); }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
   .rail {
     display: grid; grid-auto-flow: column; grid-auto-columns: min(85vw, 330px); gap: 12px;
     overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch;
-    padding: 2px 2px 14px; margin: 0 -16px; padding-left: 16px; padding-right: 16px;
-    scrollbar-width: none;
+    padding: 2px 16px 14px; margin: 0 -16px; scrollbar-width: none;
   }
   .rail::-webkit-scrollbar { display: none; }
   .rail > .card { scroll-snap-align: center; margin: 0; position: relative; overflow: hidden; }
@@ -221,7 +191,6 @@
   .thirds .in { color: var(--gold); border-color: rgba(255,200,61,.35); background: rgba(255,200,61,.07); }
   .thirds .uit { color: var(--red); border-color: rgba(248,113,113,.28); background: rgba(248,113,113,.05); opacity: .7; }
 
-  /* ── Bracket ───────────────────────────────────────────── */
   .seg {
     position: sticky; top: var(--top-off); z-index: 20;
     display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
@@ -230,25 +199,32 @@
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   }
   .seg::-webkit-scrollbar { display: none; }
-  .seg button {
-    appearance: none; font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer;
+  .seg label {
+    font-size: .78rem; font-weight: 700; cursor: pointer; user-select: none;
     color: var(--muted); background: rgba(255,255,255,.05); border: 1px solid var(--card-brd);
     padding: 8px 15px; border-radius: 999px; white-space: nowrap; min-height: 38px;
-    transition: color .15s, background .15s;
+    display: inline-flex; align-items: center; transition: color .15s, background .15s;
   }
-  .seg button.active { color: #200f02; background: linear-gradient(135deg, var(--oranje), #ff9b4a); border-color: transparent; }
   .round-pane { display: none; }
-  .round-pane.active { display: block; animation: rise .25s ease; }
+#r-0:checked ~ main #pane-0{display:block;animation:rise .25s ease}
+#r-0:checked ~ main .seg label[for="r-0"]{color:#200f02;background:linear-gradient(135deg,var(--oranje),#ff9b4a);border-color:transparent}
+#r-1:checked ~ main #pane-1{display:block;animation:rise .25s ease}
+#r-1:checked ~ main .seg label[for="r-1"]{color:#200f02;background:linear-gradient(135deg,var(--oranje),#ff9b4a);border-color:transparent}
+#r-2:checked ~ main #pane-2{display:block;animation:rise .25s ease}
+#r-2:checked ~ main .seg label[for="r-2"]{color:#200f02;background:linear-gradient(135deg,var(--oranje),#ff9b4a);border-color:transparent}
+#r-3:checked ~ main #pane-3{display:block;animation:rise .25s ease}
+#r-3:checked ~ main .seg label[for="r-3"]{color:#200f02;background:linear-gradient(135deg,var(--oranje),#ff9b4a);border-color:transparent}
+#r-4:checked ~ main #pane-4{display:block;animation:rise .25s ease}
+#r-4:checked ~ main .seg label[for="r-4"]{color:#200f02;background:linear-gradient(135deg,var(--oranje),#ff9b4a);border-color:transparent}
   .matches { display: grid; gap: 10px; }
   @media (min-width: 720px) { .matches { grid-template-columns: 1fr 1fr; } }
-  .m {
-    background: var(--card); border: 1px solid var(--card-brd); border-radius: 16px;
-    padding: 12px 14px; cursor: pointer; transition: border-color .2s;
-  }
-  .m:hover, .m:focus-visible { border-color: rgba(255,107,26,.55); outline: none; }
+  .m { background: var(--card); border: 1px solid var(--card-brd); border-radius: 16px; padding: 12px 14px; transition: border-color .2s; }
+  .m:hover { border-color: rgba(255,107,26,.55); }
+  .m summary { cursor: pointer; list-style: none; }
+  .m summary::-webkit-details-marker { display: none; }
   .m .lbl { font-size: .64rem; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 6px; }
   .m .lbl .chev { margin-left: auto; transition: transform .25s; font-size: .75rem; }
-  .m.open .lbl .chev { transform: rotate(180deg); }
+  .m[open] .lbl .chev { transform: rotate(180deg); }
   .m .row { display: flex; align-items: center; gap: 9px; padding: 5px 0 2px; font-size: .95rem; }
   .m .row .f { font-size: 1.3rem; }
   .m .row .n { font-weight: 600; }
@@ -256,18 +232,11 @@
   .m .row.lose { opacity: .52; }
   .m .row.nlteam .n { color: var(--oranje); }
   .m .row .s { margin-left: auto; font-weight: 800; font-size: 1.05rem; font-variant-numeric: tabular-nums; min-width: 18px; text-align: right; }
-  .m .note { display: none; margin-top: 9px; padding-top: 9px; border-top: 1px dashed rgba(255,255,255,.1); color: var(--soft); font-size: .84rem; }
-  .m.open .note { display: block; animation: fadeIn .25s ease; }
+  .m .note { margin-top: 9px; padding-top: 9px; border-top: 1px dashed rgba(255,255,255,.1); color: var(--soft); font-size: .84rem; animation: fadeIn .25s ease; }
   .m.finalcard { border-color: rgba(255,200,61,.45); background: linear-gradient(160deg, rgba(255,200,61,.13), transparent 60%), var(--card); }
   .tap-hint { color: var(--muted); font-size: .72rem; text-align: center; margin-top: 10px; }
 
-  /* ── Nederland ─────────────────────────────────────────── */
-  .nl-hero {
-    border-color: rgba(255,107,26,.45);
-    background:
-      radial-gradient(100% 120% at 0% 0%, rgba(255,107,26,.2), transparent 55%),
-      var(--card);
-  }
+  .nl-hero { border-color: rgba(255,107,26,.45); background: radial-gradient(100% 120% at 0% 0%, rgba(255,107,26,.2), transparent 55%), var(--card); }
   .nl-hero .flag { font-size: 2.6rem; line-height: 1; }
   .nl-hero .fin { font-size: 1.25rem; font-weight: 900; margin: 6px 0 8px; color: var(--oranje); }
   .tl { margin: 4px 0 0 6px; }
@@ -284,13 +253,8 @@
   .tl-fix .res { color: var(--gold); margin-left: 7px; font-variant-numeric: tabular-nums; }
   .tl-why { font-size: .84rem; color: var(--soft); }
 
-  /* ── Topscorers & prijzen ──────────────────────────────── */
   .podium { display: grid; grid-template-columns: 1fr 1.12fr 1fr; gap: 8px; align-items: end; margin: 4px 0 16px; }
-  .pod {
-    text-align: center; padding: 14px 6px 12px; border-radius: 16px;
-    border: 1px solid var(--card-brd);
-    background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.015));
-  }
+  .pod { text-align: center; padding: 14px 6px 12px; border-radius: 16px; border: 1px solid var(--card-brd); background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.015)); }
   .pod .medal { font-size: 1.35rem; }
   .pod .pf { font-size: 1.45rem; margin-top: 2px; }
   .pod .pn { font-weight: 800; font-size: .8rem; line-height: 1.25; margin-top: 3px; }
@@ -314,15 +278,10 @@
   .awards .who { font-weight: 800; font-size: 1.02rem; margin-bottom: 4px; }
   .awards p { font-size: .84rem; color: var(--soft); }
 
-  /* ── Scorito ───────────────────────────────────────────── */
   ol.steps { list-style: none; counter-reset: s; }
   ol.steps li { counter-increment: s; position: relative; padding: 9px 0 9px 38px; border-bottom: 1px dashed rgba(255,255,255,.08); font-size: .88rem; color: var(--soft); }
   ol.steps li:last-child { border-bottom: 0; }
-  ol.steps li::before {
-    content: counter(s); position: absolute; left: 0; top: 9px;
-    width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
-    font-size: .72rem; font-weight: 800; color: var(--oranje); background: rgba(255,107,26,.13);
-  }
+  ol.steps li::before { content: counter(s); position: absolute; left: 0; top: 9px; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-size: .72rem; font-weight: 800; color: var(--oranje); background: rgba(255,107,26,.13); }
   .pickgrid { display: grid; gap: 12px; }
   @media (min-width: 800px) { .pickgrid { grid-template-columns: repeat(3, 1fr); } .pickgrid .card { margin: 0; } }
   ul.picks { list-style: none; }
@@ -341,577 +300,819 @@
 </head>
 <body>
 <div class="pitch-lines" aria-hidden="true"></div>
+<input type="radio" name="tab" id="t-verdict" class="vh" checked>
+<input type="radio" name="tab" id="t-poules" class="vh">
+<input type="radio" name="tab" id="t-bracket" class="vh">
+<input type="radio" name="tab" id="t-nederland" class="vh">
+<input type="radio" name="tab" id="t-topscorers" class="vh">
+<input type="radio" name="tab" id="t-scorito" class="vh">
+<input type="radio" name="round" id="r-0" class="vh" checked>
+<input type="radio" name="round" id="r-1" class="vh">
+<input type="radio" name="round" id="r-2" class="vh">
+<input type="radio" name="round" id="r-3" class="vh">
+<input type="radio" name="round" id="r-4" class="vh">
 <header class="appbar">
   <div class="appbar-inner">
     <span class="logo" aria-hidden="true">⚽</span>
     <div class="appbar-text">
       <strong>WK 2026 · De Grote Voorspelling</strong>
-      <small id="header-sub"></small>
+      <small>Agent council: 6 voorspellingsagents + 5 onafhankelijke critici · alle onderdelen geverifieerd vóór publicatie</small>
     </div>
-    <span class="champ" id="champ-pill"></span>
+    <span class="champ">🏆 Spanje</span>
   </div>
 </header>
-<nav id="nav" aria-label="Secties"></nav>
-<main id="main"></main>
-<footer id="footer"></footer>
-
-<script>
-// ============================================================
-// FORECAST DATA — gevuld door de agent council (zie commit log)
-// ============================================================
-const FORECAST = window.__FORECAST_DATA__ = {
-  meta: {
-    generatedAt: "10 juni 2026",
-    subtitle: "Agent council: 6 voorspellingsagents + 5 onafhankelijke critici · alle onderdelen geverifieerd vóór publicatie",
-    disclaimer: "Voorspelling op basis van odds, vorm, selecties en bracket-analyse per 10 juni 2026 — geen garantie, wel beslissend."
-  },
-  verdict: {
-    champion: "Spanje", championFlag: "🇪🇸",
-    runnerUp: "Engeland", finalScore: "2-1",
-    summary: "Spanje wordt op 19 juli 2026 in het MetLife Stadium wereldkampioen door Engeland met 2-1 te verslaan — een remake van de EK-finale 2024 met hetzelfde script: Yamal opent, Kane maakt gelijk, en Oyarzabal schiet (alweer) laat de winnende binnen. Spanje is de enige ploeg die acht wedstrijden lang de wedstrijd dicteert in plaats van ondergaat.",
-    keyArguments: [
-      "Markt én modellen wijzen dezelfde kant op: Spanje is bookmaker-favoriet (+450) en heeft volgens Opta met 98,5% de hoogste kwalificatiekans van alle 48 landen.",
-      "De EK 2024-kern zit in zijn prime, en Yamal is na zijn hamstring-opbouwschema precies vanaf de knock-outfase weer vol belastbaar.",
-      "Finale-DNA: EK 2024 gewonnen (2-1 vs Engeland, Oyarzabal 86'), Nations League 2023 gewonnen; de NL-finale 2025 ging pas na penalty's verloren.",
-      "Het bracket-pad klopt: Frankrijk wacht pas in de halve finale — exact het duel dat Spanje op EK 2024 won (2-1).",
-      "Council-proces: elk onderdeel is door een verse, context-loze criticus geverifieerd; twee afkeuringen zijn verwerkt (o.a. de volledige Gouden Schoen-herberekening waardoor Kane Mbappé klopt op assists)."
-    ]
-  },
-  favorites: [
-    { team: "Spanje", flag: "🇪🇸", odds: "+450 (favoriet)", endStation: "🏆 Wereldkampioen", analysis: "Beste middenveld ter wereld (Pedri, Fabián Ruiz), Yamal vanaf de knock-outs op volle toeren en een defensie die in 8 duels maar 4 goals weggeeft. De enige topploeg zonder zwakke plek." },
-    { team: "Frankrijk", flag: "🇫🇷", odds: "+500", endStation: "3e plaats", analysis: "Het plafond is intact (maart: zeges op Brazilië én Colombia), maar de wisselvalligheid ook (1-2 verlies tegen Ivoorkust op 4 juni). Strandt in de halve finale opnieuw op Spanje; Mbappé troost zich met 8 goals." },
-    { team: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", odds: "+700", endStation: "Verliezend finalist", analysis: "Tuchels Engeland is geen galavoetbal maar Duits-efficiënt: compact, dodelijk bij standaardsituaties, met Kane in de vorm van zijn leven (61 goals bij Bayern). Schakelt Brazilië én Argentinië uit, maar in de finale is Spanje gewoon beter." },
-    { team: "Brazilië", flag: "🇧🇷", odds: "+850", endStation: "Kwartfinale", analysis: "Wint zonder Rodrygo en Militão alsnog poule C en overleeft een Haaland-spektakel (3-2), maar de defensie zonder Militão is precies waar Kane leeft: 1-2 tegen Engeland in de Miami-hitte." },
-    { team: "Portugal", flag: "🇵🇹", odds: "+850", endStation: "Kwartfinale", analysis: "Te diep voor poule K en Zwitserland (déjà vu 2022), maar in de kwartfinale zakt een 41-jarige Ronaldo met hamstringverleden door de fysieke ondergrens: 0-2 tegen Argentinië in het allerlaatste Messi-Ronaldo-duel." },
-    { team: "Argentinië", flag: "🇦🇷", odds: "+1000", endStation: "4e plaats", analysis: "De titelverdediger wint toernooi-volwassen van Uruguay, Turkije en Portugal, maar in de halve finale lopen de oudere benen (Messi 39 op 24 juni) vast op een vers Engels monsterblok." },
-    { team: "Duitsland", flag: "🇩🇪", odds: "+1300", endStation: "Achtste finale", analysis: "Walst door poule E en Tsjechië, maar treft in de achtste finale meteen Frankrijk: Mbappés diepgang tegen de hoge Duitse lijn is precies de wedstrijd die Deschamps-voetbal wint (1-2)." },
-    { team: "Nederland", flag: "🇳🇱", odds: "+1600", endStation: "Ronde van 32", analysis: "Wint poule F, maar de perfecte storm in Monterrey (hitte, halve defensie afwezig, Marokko met CL-winnaar Hakimi) wordt Oranje in de ronde van 32 fataal: 1-2. Zie het Nederland-tabblad." }
-  ],
-  groups: [
-    { letter: "A", analysis: "Mexico wint vlekkeloos: het Azteca op 2.200 m hoogte, 8 duels ongeslagen in 2026 en een 5-1 tegen Servië als generale. Zuid-Korea pakt P2 op doelsaldo na 1-1 tegen Tsjechië.", teams: [
-      { name: "Mexico", flag: "🇲🇽", pos: 1, pts: 9, status: "advance" },
-      { name: "Zuid-Korea", flag: "🇰🇷", pos: 2, pts: 4, status: "advance" },
-      { name: "Tsjechië", flag: "🇨🇿", pos: 3, pts: 4, status: "third" },
-      { name: "Zuid-Afrika", flag: "🇿🇦", pos: 4, pts: 0, status: "out" } ] },
-    { letter: "B", analysis: "Canada mist Davies (hamstring) in de opener en morst punten; het degelijke Zwitserland profiteert. Bosnië — dat Italië uit de play-offs knikkerde — gaat als sterke nummer 3 door.", teams: [
-      { name: "Zwitserland", flag: "🇨🇭", pos: 1, pts: 7, status: "advance" },
-      { name: "Canada", flag: "🇨🇦", pos: 2, pts: 5, status: "advance" },
-      { name: "Bosnië-Herzegovina", flag: "🇧🇦", pos: 3, pts: 4, status: "third" },
-      { name: "Qatar", flag: "🇶🇦", pos: 4, pts: 0, status: "out" } ] },
-    { letter: "C", analysis: "Brazilië wint ook zonder Rodrygo en Militão alle drie de duels (vorm: 6-2 vs Panama, 2-1 vs Egypte). Marokko (FIFA #7, kern van 2022 intact) comfortabel tweede; Schotlands 3 punten zijn te weinig.", teams: [
-      { name: "Brazilië", flag: "🇧🇷", pos: 1, pts: 9, status: "advance" },
-      { name: "Marokko", flag: "🇲🇦", pos: 2, pts: 6, status: "advance" },
-      { name: "Schotland", flag: "🏴󠁧󠁢󠁳󠁣󠁴󠁿", pos: 3, pts: 3, status: "out" },
-      { name: "Haïti", flag: "🇭🇹", pos: 4, pts: 0, status: "out" } ] },
-    { letter: "D", analysis: "VS–Turkije eindigt gelijk; de VS pakken P1 op doelsaldo met westkust-thuisvoordeel (de 1-2 tegen Duitsland was een schoonheidsfoutje). Turkijes gouden generatie (Güler, Yıldız) gaat ruim door; Paraguay wint het duel om P3.", teams: [
-      { name: "Verenigde Staten", flag: "🇺🇸", pos: 1, pts: 7, status: "advance" },
-      { name: "Turkije", flag: "🇹🇷", pos: 2, pts: 7, status: "advance" },
-      { name: "Paraguay", flag: "🇵🇾", pos: 3, pts: 3, status: "third" },
-      { name: "Australië", flag: "🇦🇺", pos: 4, pts: 0, status: "out" } ] },
-    { letter: "E", analysis: "Duitsland walst door de poule (4-0 vs Finland, 2-1 bij de VS — ook zonder Gnabry). Ivoorkust pakt op momentum (2-1 op Frankrijk!) P2 boven Ecuador na 1-1 onderling; beide nummers 2 en 3 zijn hier sterk.", teams: [
-      { name: "Duitsland", flag: "🇩🇪", pos: 1, pts: 9, status: "advance" },
-      { name: "Ivoorkust", flag: "🇨🇮", pos: 2, pts: 4, status: "advance" },
-      { name: "Ecuador", flag: "🇪🇨", pos: 3, pts: 4, status: "third" },
-      { name: "Curaçao", flag: "🇨🇼", pos: 4, pts: 0, status: "out" } ] },
-    { letter: "F", analysis: "Nederland wint de poule met 7 punten, niet met 9: de openingstest tegen het georganiseerde Japan eindigt 1-1 — zonder Simons hapert de creatieve verbinding. Daarna is de as Van Dijk–De Jong–Gakpo te sterk voor Zweden (2-0) en Tunesië (2-0). Japan tweede; Zweden gaat dankzij Gyökeres als nummer 3 door.", teams: [
-      { name: "Nederland", flag: "🇳🇱", pos: 1, pts: 7, status: "advance", nl: true },
-      { name: "Japan", flag: "🇯🇵", pos: 2, pts: 5, status: "advance" },
-      { name: "Zweden", flag: "🇸🇪", pos: 3, pts: 4, status: "third" },
-      { name: "Tunesië", flag: "🇹🇳", pos: 4, pts: 0, status: "out" } ] },
-    { letter: "G", analysis: "België is in bloedvorm (2-0 vs Kroatië, 5-0 vs Tunesië): 9 punten, geen discussie. Egypte en Iran houden elkaar op 1-1; Salahs Egypte tweede op doelsaldo, Iran gaat als nummer 3 door.", teams: [
-      { name: "België", flag: "🇧🇪", pos: 1, pts: 9, status: "advance" },
-      { name: "Egypte", flag: "🇪🇬", pos: 2, pts: 4, status: "advance" },
-      { name: "Iran", flag: "🇮🇷", pos: 3, pts: 4, status: "third" },
-      { name: "Nieuw-Zeeland", flag: "🇳🇿", pos: 4, pts: 0, status: "out" } ] },
-    { letter: "H", analysis: "Spanje (Opta: 98,5% kwalificatiekans, hoogste van het toernooi) pakt het maximum; Yamal wordt rustig opgebouwd. Uruguay degelijk tweede; Saoedi-Arabiës 3 punten met -3 vallen buiten de beste nummers 3.", teams: [
-      { name: "Spanje", flag: "🇪🇸", pos: 1, pts: 9, status: "advance" },
-      { name: "Uruguay", flag: "🇺🇾", pos: 2, pts: 6, status: "advance" },
-      { name: "Saoedi-Arabië", flag: "🇸🇦", pos: 3, pts: 3, status: "out" },
-      { name: "Kaapverdië", flag: "🇨🇻", pos: 4, pts: 0, status: "out" } ] },
-    { letter: "I", analysis: "Frankrijk herstelt zich van de Ivoorkust-dreun en wint alles — Mbappé is fit. Haaland (16 kwalificatiegoals) beslist het sleutelduel met Senegal: Noorwegen tweede, Senegal als nummer 3 nipt door.", teams: [
-      { name: "Frankrijk", flag: "🇫🇷", pos: 1, pts: 9, status: "advance" },
-      { name: "Noorwegen", flag: "🇳🇴", pos: 2, pts: 6, status: "advance" },
-      { name: "Senegal", flag: "🇸🇳", pos: 3, pts: 3, status: "third" },
-      { name: "Irak", flag: "🇮🇶", pos: 4, pts: 0, status: "out" } ] },
-    { letter: "J", analysis: "Titelverdediger Argentinië foutloos (Messi fit, aanvoerder op zijn zesde WK). Oostenrijk–Algerije eindigt 1-1; Rangnicks ploeg tweede op doelsaldo, maar Algerije (dat Nederland versloeg op 3 juni!) gaat óók door.", teams: [
-      { name: "Argentinië", flag: "🇦🇷", pos: 1, pts: 9, status: "advance" },
-      { name: "Oostenrijk", flag: "🇦🇹", pos: 2, pts: 4, status: "advance" },
-      { name: "Algerije", flag: "🇩🇿", pos: 3, pts: 4, status: "third" },
-      { name: "Jordanië", flag: "🇯🇴", pos: 4, pts: 0, status: "out" } ] },
-    { letter: "K", analysis: "Portugal is te diep voor Colombia, ook met een twijfelende Ronaldo (41): Bruno Fernandes draagt het. DR Congo wint het duel om P3 van Uzbekistan, maar strandt op doelsaldo buiten de beste 8.", teams: [
-      { name: "Portugal", flag: "🇵🇹", pos: 1, pts: 9, status: "advance" },
-      { name: "Colombia", flag: "🇨🇴", pos: 2, pts: 6, status: "advance" },
-      { name: "DR Congo", flag: "🇨🇩", pos: 3, pts: 3, status: "out" },
-      { name: "Uzbekistan", flag: "🇺🇿", pos: 4, pts: 0, status: "out" } ] },
-    { letter: "L", analysis: "Engeland (Opta: 67,5% groepswinst) controleert en Kane prikt: 4 groepsgoals. Kroatiës toernooi-DNA is ruim genoeg voor P2; Ghana wint alleen van Panama en valt buiten de beste nummers 3.", teams: [
-      { name: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", pos: 1, pts: 9, status: "advance" },
-      { name: "Kroatië", flag: "🇭🇷", pos: 2, pts: 6, status: "advance" },
-      { name: "Ghana", flag: "🇬🇭", pos: 3, pts: 3, status: "out" },
-      { name: "Panama", flag: "🇵🇦", pos: 4, pts: 0, status: "out" } ] }
-  ],
-  bestThirds: [
-    { team: "Ecuador (4 pt, +1)", flag: "🇪🇨", advances: true },
-    { team: "Iran (4 pt, +1)", flag: "🇮🇷", advances: true },
-    { team: "Zweden (4 pt, 0)", flag: "🇸🇪", advances: true },
-    { team: "Algerije (4 pt, 0)", flag: "🇩🇿", advances: true },
-    { team: "Bosnië (4 pt, -1)", flag: "🇧🇦", advances: true },
-    { team: "Tsjechië (4 pt, -2)", flag: "🇨🇿", advances: true },
-    { team: "Senegal (3 pt, -1)", flag: "🇸🇳", advances: true },
-    { team: "Paraguay (3 pt, -2)", flag: "🇵🇾", advances: true },
-    { team: "DR Congo (3 pt, -2)", flag: "🇨🇩", advances: false },
-    { team: "Ghana (3 pt, -2)", flag: "🇬🇭", advances: false },
-    { team: "Schotland (3 pt, -3)", flag: "🏴󠁧󠁢󠁳󠁣󠁴󠁿", advances: false },
-    { team: "Saoedi-Arabië (3 pt, -3)", flag: "🇸🇦", advances: false }
-  ],
-  bracket: {
-    r32: [
-      { label: "M73 · 28 jun · Inglewood", home: "Zuid-Korea", homeFlag: "🇰🇷", away: "Canada", awayFlag: "🇨🇦", score: "1-2", winner: "Canada", note: "Quasi-thuiswedstrijd voor Canada; David en de teruggekeerde Davies maken fysiek het verschil tegen een Korea met veel reiskilometers." },
-      { label: "M74 · 29 jun · Foxborough", home: "Duitsland", homeFlag: "🇩🇪", away: "Tsjechië", awayFlag: "🇨🇿", score: "3-0", winner: "Duitsland", note: "Klasseverschil te groot; de Duitse machine draait na een dominante groepsfase." },
-      { label: "M75 · 29 jun · Monterrey", home: "Nederland", homeFlag: "🇳🇱", away: "Marokko", awayFlag: "🇲🇦", score: "1-2", winner: "Marokko", note: "De perfecte storm tegen Oranje: 35°C+ in Monterrey, vijf afwezige basisspelers, en Marokko volledig intact met CL-winnaar Hakimi. Gakpo zet NL op voorsprong, Brahim Díaz maakt gelijk en Hakimi beslist in minuut 81 op de counter." },
-      { label: "M76 · 29 jun · Houston", home: "Brazilië", homeFlag: "🇧🇷", away: "Japan", awayFlag: "🇯🇵", score: "2-1", winner: "Brazilië", note: "Japan blijft compact, maar Vinícius beslist het in de tweede helft — te veel individuele kwaliteit." },
-      { label: "M77 · 30 jun · East Rutherford", home: "Frankrijk", homeFlag: "🇫🇷", away: "Iran", awayFlag: "🇮🇷", score: "3-0", winner: "Frankrijk", note: "Tegen Irans lage blok is Mbappés diepgang dodelijk; de Ivoorkust-nederlaag was de wake-upcall." },
-      { label: "M78 · 30 jun · Arlington", home: "Ivoorkust", homeFlag: "🇨🇮", away: "Noorwegen", awayFlag: "🇳🇴", score: "1-2", winner: "Noorwegen", note: "Ivoorkust piekte te vroeg met de zege op Frankrijk; geen antwoord op Haalands loopacties." },
-      { label: "M79 · 30 jun · Mexico-Stad", home: "Mexico", homeFlag: "🇲🇽", away: "Zweden", awayFlag: "🇸🇪", score: "2-1", winner: "Mexico", note: "Azteca op 2.200 meter met 87.000 fans is een onneembare vesting voor een niet-geacclimatiseerd Zweden." },
-      { label: "M80 · 1 jul · Atlanta", home: "Engeland", homeFlag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", away: "Ecuador", awayFlag: "🇪🇨", score: "2-0", winner: "Engeland", note: "Kane scoort; Ecuador mist de creativiteit om Tuchels defensie open te breken." },
-      { label: "M81 · 1 jul · Santa Clara", home: "Verenigde Staten", homeFlag: "🇺🇸", away: "Bosnië-Herzegovina", awayFlag: "🇧🇦", score: "2-0", winner: "Verenigde Staten", note: "Thuisvoordeel, Pulisic op dreef; Bosnië was als nummer 3 al tevreden." },
-      { label: "M82 · 1 jul · Seattle", home: "België", homeFlag: "🇧🇪", away: "Senegal", awayFlag: "🇸🇳", score: "2-1", winner: "België", note: "De Bruynes laatste toernooi-magie en Doku's dribbels breken het fysieke blok nét open — zwoegen in Seattle." },
-      { label: "M83 · 2 jul · Toronto", home: "Colombia", homeFlag: "🇨🇴", away: "Kroatië", awayFlag: "🇭🇷", score: "2-1", winner: "Colombia", note: "Jongere benen en Luis Díaz in vorm; Modrić (40) loopt na 70 minuten leeg in de derde wedstrijd in twaalf dagen." },
-      { label: "M84 · 2 jul · Inglewood", home: "Spanje", homeFlag: "🇪🇸", away: "Oostenrijk", awayFlag: "🇦🇹", score: "3-1", winner: "Spanje", note: "Rangnick-pressing houdt het een helft vol; daarna tikken Pedri en Yamal het uit. Yamal scoort — hij is er weer." },
-      { label: "M85 · 2 jul · Vancouver", home: "Zwitserland", homeFlag: "🇨🇭", away: "Algerije", awayFlag: "🇩🇿", score: "2-1", winner: "Zwitserland", note: "De degelijkste toernooiploeg van Europa; Algerije stunt niet twee keer in één maand." },
-      { label: "M86 · 3 jul · Miami", home: "Argentinië", homeFlag: "🇦🇷", away: "Uruguay", awayFlag: "🇺🇾", score: "2-1", winner: "Argentinië", note: "Remake van de allereerste WK-finale (1930), maar Miami is letterlijk Messi's thuisstadion. Messi scoort." },
-      { label: "M87 · 3 jul · Kansas City", home: "Portugal", homeFlag: "🇵🇹", away: "Paraguay", awayFlag: "🇵🇾", score: "2-0", winner: "Portugal", note: "Zelfs met een twijfelende Ronaldo te breed: Bruno Fernandes en Félix nemen het over." },
-      { label: "M88 · 3 jul · Arlington", home: "Turkije", homeFlag: "🇹🇷", away: "Egypte", awayFlag: "🇪🇬", score: "2-1", winner: "Turkije", note: "Güler en Yıldız hebben meer creativiteit dan een Egypte dat te veel op Salah leunt." }
-    ],
-    r16: [
-      { label: "M89 · 4 jul · Philadelphia", home: "Duitsland", homeFlag: "🇩🇪", away: "Frankrijk", awayFlag: "🇫🇷", score: "1-2", winner: "Frankrijk", note: "De klassieker van deze ronde: Mbappés snelheid tegen de hoge Duitse lijn is precies de wedstrijd die Deschamps-voetbal wint." },
-      { label: "M90 · 4 jul · Houston", home: "Canada", homeFlag: "🇨🇦", away: "Marokko", awayFlag: "🇲🇦", score: "0-1", winner: "Marokko", note: "In de Houston-hitte is Marokko's geduldige stijl superieur; Regragui's blok geeft niets weg en Brahim Díaz prikt de enige goal." },
-      { label: "M91 · 5 jul · East Rutherford", home: "Brazilië", homeFlag: "🇧🇷", away: "Noorwegen", awayFlag: "🇳🇴", score: "3-2", winner: "Brazilië", note: "Spektakelstuk: Haaland scoort twee keer, maar Noorwegen heeft achterin geen antwoord op Vinícius en Raphinha." },
-      { label: "M92 · 5 jul · Mexico-Stad", home: "Mexico", homeFlag: "🇲🇽", away: "Engeland", awayFlag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", score: "1-2", winner: "Engeland", note: "De zwaarste horde: Azteca, hoogte, 90.000 man — maar Kane en Bellingham beslissen het. Engelands eerste echte statement." },
-      { label: "M93 · 6 jul · Arlington", home: "Colombia", homeFlag: "🇨🇴", away: "Spanje", awayFlag: "🇪🇸", score: "1-2", winner: "Spanje", note: "Colombia geeft de favoriet een lastige avond, maar Spanjes middenveld droogt Díaz' aanvoer op." },
-      { label: "M94 · 6 jul · Seattle", home: "Verenigde Staten", homeFlag: "🇺🇸", away: "België", awayFlag: "🇧🇪", score: "2-1 (n.v.)", winner: "Verenigde Staten", note: "Revanche voor 2014: thuisvoordeel, een vermoeid Belgisch blok, en Pulisic in de verlenging als nationale held." },
-      { label: "M95 · 7 jul · Atlanta", home: "Argentinië", homeFlag: "🇦🇷", away: "Turkije", awayFlag: "🇹🇷", score: "3-1", winner: "Argentinië", note: "Turkse bravoure houdt een helft stand, dan kantelt de regerend wereldkampioen het." },
-      { label: "M96 · 7 jul · Vancouver", home: "Zwitserland", homeFlag: "🇨🇭", away: "Portugal", awayFlag: "🇵🇹", score: "1-3", winner: "Portugal", note: "Déjà vu van WK 2022 (6-1): degelijk maar voorspelbaar Zwitserland tegen te veel Portugese wapens." }
-    ],
-    qf: [
-      { label: "M97 · 9 jul · Foxborough", home: "Frankrijk", homeFlag: "🇫🇷", away: "Marokko", awayFlag: "🇲🇦", score: "2-1", winner: "Frankrijk", note: "Remake van de halve finale 2022: heroïsch Marokko, maar zonder echte afmaker (En-Nesyri buiten de selectie) één niveau tekort. Mbappé en Olise scoren; Brahim Díaz doet wat terug." },
-      { label: "M98 · 10 jul · Inglewood", home: "Spanje", homeFlag: "🇪🇸", away: "Verenigde Staten", awayFlag: "🇺🇸", score: "3-1", winner: "Spanje", note: "Het Spaanse positiespel ontmantelt Pochettino's pressing; Yamal, Olmo en Oyarzabal scoren, Pulisic redt de eer." },
-      { label: "M99 · 11 jul · Miami", home: "Brazilië", homeFlag: "🇧🇷", away: "Engeland", awayFlag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", score: "1-2", winner: "Engeland", note: "Brazilië domineert de bal maar loopt in het mes: Saka en Bellingham counteren de defensie zonder Militão kapot. In de Miami-middaghitte wint de best georganiseerde ploeg." },
-      { label: "M100 · 11 jul · Kansas City", home: "Argentinië", homeFlag: "🇦🇷", away: "Portugal", awayFlag: "🇵🇹", score: "2-0", winner: "Argentinië", note: "Messi vs Ronaldo, de allerlaatste keer — en het eindigt zoals de carrières lopen: Messi en Álvarez beslissen, Ronaldo (41) zakt door de fysieke ondergrens." }
-    ],
-    sf: [
-      { label: "M101 · 14 jul · Arlington", home: "Frankrijk", homeFlag: "🇫🇷", away: "Spanje", awayFlag: "🇪🇸", score: "1-2", winner: "Spanje", note: "Remake van de EK-halve finale 2024, zelfde uitkomst en zelfde reden: Spanje pakt Frankrijk de bal af én dekt Mbappés counter structureel af. Pedri en Oyarzabal scoren; Mbappé doet wat terug." },
-      { label: "M102 · 15 jul · Atlanta", home: "Engeland", homeFlag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", away: "Argentinië", awayFlag: "🇦🇷", score: "2-1", winner: "Engeland", note: "Zesde wedstrijd in 24 dagen voor de titelverdediger met een 39-jarige als spil. Kane opent uit een corner-afval, Álvarez maakt gelijk, maar de Engelse bank (Watkins) beslist het slotkwartier." }
-    ],
-    thirdPlace: { label: "M103 · Troostfinale · 18 jul · Miami", home: "Frankrijk", homeFlag: "🇫🇷", away: "Argentinië", awayFlag: "🇦🇷", score: "3-2", winner: "Frankrijk", note: "Remake van de finale 2022, nu zonder inzet en dus mét goals. Mbappé, Dembélé en Olise scoren; Lautaro Martínez 2x voor een roterend Argentinië (zonder Messi)." },
-    final: { label: "M104 · FINALE · 19 jul · MetLife Stadium", home: "Spanje", homeFlag: "🇪🇸", away: "Engeland", awayFlag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", score: "2-1", winner: "Spanje", note: "Het EK 2024-script herhaalt zich: Yamal opent vanaf rechts, Kane kopt gelijk, en in de slotfase schiet Oyarzabal — alweer — de winnende binnen. Spanje pakt zijn tweede ster." }
-  },
-  netherlands: {
-    group: "F",
-    finish: "Ronde van 32 — uitgeschakeld door Marokko (1-2)",
-    summary: "Oranje wint poule F met 7 punten, maar de loting is wreed: als groepswinnaar wacht in Monterrey meteen Marokko, de nummer 2 van de Brazilië-poule en halvefinalist van 2022 met de kern volledig intact. In de middaghitte van 35°C+, met een geïmproviseerde defensie en zonder creatieve motor, eindigt het WK van Nederland op 29 juni — eerder dan de odds (+1600, 8e favoriet) suggereren, maar de council is unaniem: deze ploeg mist dit toernooi simpelweg te veel.",
-    squadNotes: "Koeman mist een halve ruggengraat: Xavi Simons (kruisband), De Ligt (rug), De Vrij (lies), Schouten (kruisband) én Jurriën Timber (lies, noodvervanger Geertruida). De vorm onderstreept het: 0-1 verlies tegen Algerije (3 juni) en een moeizame 2-1 tegen Uzbekistan (rode kaart Til, winnende penalty van Gakpo in minuut 98). De as Van Dijk–Frenkie de Jong–Gakpo is goed genoeg voor de poule, niet voor een fitte top-10-tegenstander.",
-    path: [
-      { round: "Groepsfase · 14 juni · Arlington", fixture: "Nederland – Japan", result: "1-1", win: true, why: "Dé sleuteltest: Japan (FIFA #18) is precies het georganiseerde, counterende type tegenstander waar dit Oranje tegen worstelt. Zonder Simons ontbreekt de verbinding tussen middenveld en aanval." },
-      { round: "Groepsfase · 20 juni · Houston", fixture: "Nederland – Zweden", result: "2-0", win: true, why: "Zweden (1-3 verlies tegen Noorwegen, buiten Gyökeres weinig dreiging) is een maat te klein voor de as Van Dijk–De Jong–Gakpo." },
-      { round: "Groepsfase · 25 juni · Kansas City", fixture: "Tunesië – Nederland", result: "0-2", win: true, why: "Tunesië (0-5 weggespeeld door België) is in het slotduel een prooi. Nederland groepswinnaar met 7 punten." },
-      { round: "Ronde van 32 · 29 juni · Monterrey", fixture: "Nederland – Marokko", result: "1-2", win: false, why: "De perfecte storm: 35°C+ middaghitte, vijf afwezige basisspelers, en Hakimi die als kersverse Champions League-winnaar exact in Oranjes kwetsbare zone speelt. Gakpo opent nog, maar Brahim Díaz en Hakimi (81', counter) maken een einde aan de WK-droom. Bono houdt de rest tegen, zoals in 2022." }
-    ]
-  },
-  topscorers: [
-    { rank: 1, player: "Harry Kane", team: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", goals: 8, note: "4 in de groep + R32 + R16 + HF + finale. Wint de Gouden Schoen op de tiebreak: bij 8-8 met Mbappé tellen eerst assists (Kane 3, Mbappé 2). Komt van een 61-goalseizoen bij Bayern." },
-    { rank: 2, player: "Kylian Mbappé", team: "Frankrijk", flag: "🇫🇷", goals: 8, note: "Scoort in 6 van zijn 8 duels, inclusief KF, HF en troostfinale — maar grijpt op assists (2 om 3) naast de prijs. Evenaart wel zijn 2022-totaal." },
-    { rank: 3, player: "Lamine Yamal", team: "Spanje", flag: "🇪🇸", goals: 6, note: "Brace in groepsduel 2, goal in duel 3 (na zijn minutenopbouw), daarna R32, KF en de openingsgoal in de finale. Plus 4 assists." },
-    { rank: 4, player: "Erling Haaland", team: "Noorwegen", flag: "🇳🇴", goals: 5, note: "3 in de groep + 2 in de verloren achtste finale tegen Brazilië. Klopt Messi bij gelijke goals én assists (2-2) op minste minuten: ±437 om ±610." },
-    { rank: 5, player: "Lionel Messi", team: "Argentinië", flag: "🇦🇷", goals: 5, note: "3 groepsgoals (waarvan 2 penalty's) + R32 + KF tegen Portugal. Scaloni managet zijn minuten (±76 per duel); de troostfinale slaat hij over." }
-  ],
-  awards: [
-    { title: "🏅 Gouden Bal", winner: "Lamine Yamal", team: "Spanje", why: "6 goals, 4 assists, betrokken bij 10 treffers en de openingsgoal in de finale. De motor van de wereldkampioen — op zijn 19e (jarig op 13 juli, zes dagen vóór de finale)." },
-    { title: "🧤 Gouden Handschoen", winner: "Unai Simón", team: "Spanje", why: "4 clean sheets (2 in de groep + R32 + R16) en slechts 4 tegengoals in 8 duels. De keeper van de kampioen met de beste defensie." },
-    { title: "🌟 Beste Jongere", winner: "Lamine Yamal", team: "Spanje", why: "Voldoet ruim aan de cutoff (geboren 13-7-2007, grens is 1-1-2005). Tweede grote toernooiprijs op rij na EK 2024 — geen discussie in de jury. Alternatief als FIFA spreidt: Pau Cubarsí." }
-  ],
-  scoritoRules: "Scorito WK is een voorspellingsspel: uitslagen van alle 104 wedstrijden, topscorer-picks per fase en landenvoorspellingen. Goals tellen per positie: <strong>verdediger 4×, middenvelder 2×, aanvaller 1×</strong>, oplopend per ronde (verdediger: 64 pt in de groepsfase → 192 pt in de finale). Landenbonus: <strong>250 pt voor de juiste wereldkampioen</strong>, 120 pt per juiste finalist, 75 pt per juiste eindpositie in de groep. Let op: bronnen verschillen over de exacte uitslag-punten (45/30 vs 90/60 per wedstrijd) — check de actuele regels in de app. Deadline groepsfase: 11 juni.",
-  scorito: {
-    captain: "Zet <strong>Spanje als wereldkampioen</strong> (250 pt) en <strong>Spanje + Engeland als finalisten</strong> (2× 120 pt). Voorspel voorzichtige uitslagen (1-0, 2-1, 1-1) — die renderen statistisch het best. En benut de 4×-multiplier: één goal van een verdediger in de finale (192 pt) is meer waard dan vier spitsengoals in de groepsfase.",
-    strategy: [
-      "Groepsfase (deadline 11 juni): volg de 12 poule-eindstanden van dit rapport; tip bij favorieten 2-0/3-0, bij krakers (NL–Japan, VS–Turkije, Engeland–Kroatië) 1-1 of 2-1.",
-      "Topscorers groepsfase: Kane en Mbappé als bankers, aangevuld met Bellingham/Pedri (2×) en Laporte (4×).",
-      "Wissel per knock-outronde naar spelers van ploegen die in dit bracket doorgaan: vanaf de kwartfinale alleen nog Spanje-, Engeland-, Frankrijk- en Argentinië-spelers.",
-      "Nederland: tip groepswinst poule F (75 pt eindpositie) maar géén lange knock-outrun — in dit bracket strandt Oranje in de ronde van 32 tegen Marokko.",
-      "Valkuilen: Bruno Fernandes (Portugal eruit in de KF), Haaland ná de achtste finale, en Oyarzabal als topscorer-pick (scoort pas laat in het toernooi: KF, HF en finale)."
-    ],
-    picks: {
-      "Verdedigers (4× punten)": [
-        { player: "Aymeric Laporte", team: "Spanje", flag: "🇪🇸", why: "Kopsterk bij standaardsituaties, basisspeler naast Cubarsí, 8 duels bij de kampioen. Dé maximale-waarde-pick (Huijsen en alle Real Madrid-spelers zitten níét in de selectie)." },
-        { player: "John Stones", team: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", why: "Tuchels corner-routine is hét Engelse wapen en Stones is de vaste eerste-paal-aanvaller; 8 duels bij de finalist. ⚠️ Risico: blessuregevoelig, slechts 4 interlands onder Tuchel." },
-        { player: "Dayot Upamecano", team: "Frankrijk", flag: "🇫🇷", why: "Fysiek dominant kopgevaar, 8 duels inclusief doelpuntrijke troostfinale. ⚠️ Risico: driestrijd met Konaté en Saliba om twee plekken." }
-      ],
-      "Middenvelders (2× punten)": [
-        { player: "Jude Bellingham", team: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", why: "De facto tweede spits met late box-runs; scoort in dit bracket o.a. in de KF tegen Brazilië. ⚠️ Kaartgevoelig: één schorsing kost een knock-outduel." },
-        { player: "Pedri", team: "Spanje", flag: "🇪🇸", why: "Scoort in de halve finale tegen Frankrijk en deelt assists uit als verlengstuk van Yamal. De la Fuente managet zijn minuten in de groepsfase." }
-      ],
-      "Aanvallers (1× punten)": [
-        { player: "Harry Kane", team: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", why: "Onze Gouden Schoen (8 goals), eerste penaltynemer, scoort van groepsfase tot en met finale." },
-        { player: "Kylian Mbappé", team: "Frankrijk", flag: "🇫🇷", why: "Ook 8 goals, verspreid over 6 duels — de troostfinale is zijn goalmine, net als in elke fase ervoor." },
-        { player: "Lamine Yamal", team: "Spanje", flag: "🇪🇸", why: "Vanaf de knock-outs vol belastbaar; 6 goals + 4 assists en de Gouden Bal. Voor de latere rondes de beste Spaanse pick." }
-      ]
-    }
-  }
-};
-
-// ============================================================
-// RENDERING
-// ============================================================
-const TABS = [
-  ["verdict", "🏆", "Verdict"],
-  ["poules", "📋", "Poules"],
-  ["bracket", "⚔️", "Bracket"],
-  ["nederland", "🇳🇱", "Oranje"],
-  ["topscorers", "🥇", "Prijzen"],
-  ["scorito", "🎯", "Scorito"],
-];
-
-function el(tag, attrs = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k === "html") node.innerHTML = v;
-    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v);
-  }
-  for (const c of [].concat(children)) {
-    if (c == null) continue;
-    node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
-  }
-  return node;
-}
-
-function parseScore(score) {
-  const m = /^(\d+)\s*-\s*(\d+)\s*(.*)$/.exec(score || "");
-  return m ? { h: m[1], a: m[2], suffix: (m[3] || "").trim() } : { h: "", a: "", suffix: score || "" };
-}
-
-function renderNav() {
-  const nav = document.getElementById("nav");
-  TABS.forEach(([id, ico, label], i) => {
-    nav.appendChild(el("button", {
-      class: i === 0 ? "active" : "",
-      "data-tab": id,
-      "aria-label": label,
-      onclick: () => switchTab(id),
-    }, [el("span", { class: "ico", "aria-hidden": "true" }, ico), el("span", { class: "lbl" }, label)]));
-  });
-}
-
-function switchTab(id) {
-  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
-  document.querySelectorAll("section.tab").forEach(s => s.classList.toggle("active", s.id === "tab-" + id));
-  window.scrollTo({ top: 0, behavior: "auto" });
-}
-
-// ── Verdict ──────────────────────────────────────────────────
-function renderVerdict() {
-  const v = FORECAST.verdict;
-  const fin = FORECAST.bracket.final;
-  const sc = parseScore(fin.score);
-  const sec = el("section", { class: "tab active", id: "tab-verdict" });
-
-  sec.appendChild(el("div", { class: "hero" }, [
-    el("div", { class: "kicker" }, "De voorspelling van de agent council"),
-    el("div", { class: "trophy", "aria-hidden": "true" }, "🏆"),
-    el("div", { class: "name" }, v.champion),
-    el("div", {}, el("span", { class: "chip" }, "Wereldkampioen 2026")),
-    el("div", { class: "scoreline" }, [
-      el("div", { class: "t" }, [el("span", { class: "f" }, fin.homeFlag), el("span", {}, fin.home)]),
-      el("div", { class: "sc" }, `${sc.h} – ${sc.a}`),
-      el("div", { class: "t" }, [el("span", { class: "f" }, fin.awayFlag), el("span", {}, fin.away)]),
-    ]),
-    el("div", { class: "meta" }, fin.label.replace(/^M\d+ · /, "")),
-  ]));
-
-  sec.appendChild(el("div", { class: "card goldc" }, [
-    el("h3", {}, "Het oordeel van de council"),
-    el("p", { class: "bodytext", html: v.summary }),
-  ]));
-
-  if (v.keyArguments.length) {
-    sec.appendChild(el("div", { class: "card" }, [
-      el("h3", {}, "Kernargumenten"),
-      el("ol", { class: "args" }, v.keyArguments.map(a => el("li", { html: a }))),
-    ]));
-  }
-
-  if (FORECAST.favorites.length) {
-    sec.appendChild(el("h2", { class: "section" }, "De favorieten gewogen"));
-    const grid = el("div", { class: "fav" });
-    FORECAST.favorites.forEach(f => {
-      const chipClass = /kampioen/i.test(f.endStation) ? "endchip win" : (f.team === "Nederland" ? "endchip nl" : "endchip");
-      grid.appendChild(el("div", { class: "card" }, [
-        el("div", { class: "fav-head" }, [
-          el("span", { class: "f" }, f.flag),
-          el("span", { class: "nm" }, f.team),
-          el("span", { class: "odds" }, f.odds),
-        ]),
-        el("span", { class: chipClass }, f.endStation),
-        el("p", { html: f.analysis }),
-      ]));
-    });
-    sec.appendChild(grid);
-  }
-  return sec;
-}
-
-// ── Poules ───────────────────────────────────────────────────
-function renderPoules() {
-  const sec = el("section", { class: "tab", id: "tab-poules" });
-  sec.appendChild(el("p", { class: "lead" }, "Voorspelde eindstanden van alle twaalf poules."));
-  sec.appendChild(el("div", { class: "legend" }, [
-    el("span", { html: '<i style="background:var(--green)"></i>Top 2: direct door' }),
-    el("span", { html: '<i style="background:var(--gold)"></i>Door als beste nummer 3' }),
-    el("span", { html: '<i style="background:rgba(255,255,255,.25)"></i>Uitgeschakeld' }),
-  ]));
-  sec.appendChild(el("p", { class: "swipe-hint" }, "← swipe door de poules →"));
-
-  const rail = el("div", { class: "rail" });
-  FORECAST.groups.forEach(g => {
-    const card = el("div", { class: "card" });
-    card.appendChild(el("span", { class: "gletter", "aria-hidden": "true" }, g.letter));
-    card.appendChild(el("h3", {}, `Poule ${g.letter}`));
-    g.teams.forEach(t => {
-      const cls = ["grow", t.status, t.nl ? "nlrow" : ""].join(" ").trim();
-      card.appendChild(el("div", { class: cls }, [
-        el("span", { class: "pos" }, String(t.pos)),
-        el("span", {}, `${t.flag} ${t.name}`),
-        el("span", { class: "pts" }, `${t.pts} pt`),
-      ]));
-    });
-    card.appendChild(el("div", { class: "gnote", html: g.analysis }));
-    rail.appendChild(card);
-  });
-  sec.appendChild(rail);
-
-  if (FORECAST.bestThirds.length) {
-    sec.appendChild(el("h2", { class: "section" }, "De strijd om de beste nummers 3"));
-    sec.appendChild(el("p", { class: "lead" }, "Acht van de twaalf nummers 3 gaan door naar de ronde van 32."));
-    sec.appendChild(el("div", { class: "card" },
-      el("div", { class: "thirds" }, FORECAST.bestThirds.map(t =>
-        el("span", { class: t.advances ? "in" : "uit" }, `${t.flag} ${t.team} ${t.advances ? "✓" : "✕"}`)))));
-  }
-  return sec;
-}
-
-// ── Bracket ──────────────────────────────────────────────────
-function matchCard(m, isFinal) {
-  const sc = parseScore(m.score);
-  const card = el("div", {
-    class: "m" + (isFinal ? " finalcard" : ""),
-    tabindex: "0",
-    role: "button",
-    onclick: () => card.classList.toggle("open"),
-    onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); card.classList.toggle("open"); } },
-  });
-  card.appendChild(el("div", { class: "lbl" }, [
-    el("span", {}, m.label + (sc.suffix ? ` · ${sc.suffix}` : "")),
-    el("span", { class: "chev", "aria-hidden": "true" }, "▾"),
-  ]));
-  [[m.home, m.homeFlag, sc.h], [m.away, m.awayFlag, sc.a]].forEach(([team, flag, goals]) => {
-    const isWinner = team === m.winner;
-    const cls = ["row", isWinner ? "win" : "lose", team === "Nederland" ? "nlteam" : ""].join(" ").trim();
-    card.appendChild(el("div", { class: cls }, [
-      el("span", { class: "f", "aria-hidden": "true" }, flag),
-      el("span", { class: "n" }, team + (isWinner ? " ✓" : "")),
-      el("span", { class: "s" }, goals),
-    ]));
-  });
-  if (m.note) card.appendChild(el("div", { class: "note", html: m.note }));
-  return card;
-}
-
-function renderBracket() {
-  const b = FORECAST.bracket;
-  const sec = el("section", { class: "tab", id: "tab-bracket" });
-  const rounds = [
-    ["1/16e", "Ronde van 32", b.r32],
-    ["1/8e", "Achtste finales", b.r16],
-    ["KF", "Kwartfinales", b.qf],
-    ["HF", "Halve finales", b.sf],
-    ["Finale", "Finale & troostfinale", [b.final, b.thirdPlace].filter(Boolean)],
-  ];
-
-  const seg = el("div", { class: "seg", role: "tablist", "aria-label": "Toernooironde" });
-  const panes = [];
-
-  rounds.forEach(([short, full, matches], i) => {
-    const pane = el("div", { class: "round-pane" + (i === 0 ? " active" : "") });
-    pane.appendChild(el("p", { class: "lead" }, full + " — tik op een wedstrijd voor de onderbouwing."));
-    const grid = el("div", { class: "matches" });
-    matches.forEach(m => grid.appendChild(matchCard(m, full.startsWith("Finale") && m === b.final)));
-    pane.appendChild(grid);
-    panes.push(pane);
-
-    seg.appendChild(el("button", {
-      class: i === 0 ? "active" : "",
-      role: "tab",
-      onclick: (e) => {
-        seg.querySelectorAll("button").forEach(x => x.classList.remove("active"));
-        e.currentTarget.classList.add("active");
-        panes.forEach((p, j) => p.classList.toggle("active", j === i));
-      },
-    }, short));
-  });
-
-  sec.appendChild(seg);
-  panes.forEach(p => sec.appendChild(p));
-  sec.appendChild(el("p", { class: "tap-hint" }, "Het pad van 🇳🇱 Oranje is oranje gemarkeerd, winnaars goud."));
-  return sec;
-}
-
-// ── Nederland ────────────────────────────────────────────────
-function renderNederland() {
-  const nl = FORECAST.netherlands;
-  const sec = el("section", { class: "tab", id: "tab-nederland" });
-
-  sec.appendChild(el("div", { class: "card nl-hero" }, [
-    el("div", { class: "flag", "aria-hidden": "true" }, "🇳🇱"),
-    el("div", { class: "fin" }, nl.finish),
-    el("p", { class: "bodytext", html: nl.summary }),
-  ]));
-
-  if (nl.path.length) {
-    sec.appendChild(el("h2", { class: "section" }, "Het pad van Oranje"));
-    const tl = el("div", { class: "tl" });
-    nl.path.forEach(step => {
-      const sc = parseScore(step.result);
-      const badge = sc.h === sc.a ? "G" : (step.win ? "W" : "V");
-      tl.appendChild(el("div", { class: "tl-step" }, [
-        el("span", { class: "tl-badge " + badge }, badge),
-        el("div", { class: "tl-round" }, step.round),
-        el("div", { class: "tl-fix" }, [step.fixture, el("span", { class: "res" }, step.result)]),
-        el("div", { class: "tl-why", html: step.why }),
-      ]));
-    });
-    sec.appendChild(el("div", { class: "card" }, tl));
-  }
-
-  if (nl.squadNotes) {
-    sec.appendChild(el("div", { class: "card" }, [
-      el("h3", {}, "Selectie & vorm"),
-      el("p", { class: "bodytext", html: nl.squadNotes }),
-    ]));
-  }
-  return sec;
-}
-
-// ── Topscorers & prijzen ─────────────────────────────────────
-function renderTopscorers() {
-  const sec = el("section", { class: "tab", id: "tab-topscorers" });
-  const ts = FORECAST.topscorers;
-
-  sec.appendChild(el("h2", { class: "section", style: "margin-top:6px" }, "🥇 Gouden Schoen"));
-  if (ts.length >= 3) {
-    const podium = el("div", { class: "podium" });
-    [[ts[1], "p2", "🥈"], [ts[0], "p1", "🥇"], [ts[2], "p3", "🥉"]].forEach(([t, cls, medal]) => {
-      podium.appendChild(el("div", { class: "pod " + cls }, [
-        el("div", { class: "medal", "aria-hidden": "true" }, medal),
-        el("div", { class: "pf", "aria-hidden": "true" }, t.flag),
-        el("div", { class: "pn" }, t.player),
-        el("div", { class: "pg" }, String(t.goals)),
-        el("div", { class: "pgl" }, "goals"),
-      ]));
-    });
-    sec.appendChild(podium);
-  }
-
-  const list = el("div", { class: "card" });
-  ts.forEach(t => {
-    list.appendChild(el("div", { class: "ts-row" }, [
-      el("span", { class: "rk" }, String(t.rank)),
-      el("div", { class: "ts-main" }, [
-        el("div", { class: "ts-name", html: `${t.flag} ${t.player} <small>· ${t.team}</small>` }),
-        el("div", { class: "ts-note", html: t.note }),
-      ]),
-      el("span", { class: "ts-goals" }, String(t.goals)),
-    ]));
-  });
-  sec.appendChild(list);
-
-  if (FORECAST.awards.length) {
-    sec.appendChild(el("h2", { class: "section" }, "Individuele prijzen"));
-    const grid = el("div", { class: "awards" });
-    FORECAST.awards.forEach(a => {
-      grid.appendChild(el("div", { class: "card" }, [
-        el("h3", {}, a.title),
-        el("div", { class: "who" }, `${a.winner} · ${a.team}`),
-        el("p", { html: a.why }),
-      ]));
-    });
-    sec.appendChild(grid);
-  }
-  return sec;
-}
-
-// ── Scorito ──────────────────────────────────────────────────
-function renderScorito() {
-  const s = FORECAST.scorito;
-  const sec = el("section", { class: "tab", id: "tab-scorito" });
-
-  if (FORECAST.scoritoRules) {
-    sec.appendChild(el("div", { class: "card" }, [
-      el("h3", {}, "Spelregels in het kort"),
-      el("p", { class: "bodytext", html: FORECAST.scoritoRules }),
-    ]));
-  }
-  if (s.captain) {
-    sec.appendChild(el("div", { class: "card accent" }, [
-      el("h3", { style: "color:var(--oranje)" }, "⭐ Gouden tip"),
-      el("p", { class: "bodytext", html: s.captain }),
-    ]));
-  }
-  if (s.strategy.length) {
-    sec.appendChild(el("h2", { class: "section" }, "Ronde-strategie"));
-    sec.appendChild(el("div", { class: "card" },
-      el("ol", { class: "steps" }, s.strategy.map(x => el("li", { html: x })))));
-  }
-
-  sec.appendChild(el("h2", { class: "section" }, "De picks"));
-  const grid = el("div", { class: "pickgrid" });
-  Object.entries(s.picks).forEach(([pos, picks]) => {
-    if (!picks.length) return;
-    const m = /^(.*?)\s*\((.*?)\)\s*$/.exec(pos);
-    const title = m ? m[1] : pos;
-    const mult = m ? m[2] : "";
-    const ul = el("ul", { class: "picks" }, picks.map(p =>
-      el("li", {}, [
-        el("div", {}, [
-          el("span", { class: "pp" }, `${p.flag} ${p.player}`),
-          el("span", { class: "pt2" }, ` · ${p.team}`),
-        ]),
-        el("div", { class: "pw", html: p.why }),
-      ])));
-    grid.appendChild(el("div", { class: "card" }, [
-      el("h3", {}, [title, mult ? el("span", { class: "mult" }, mult) : null]),
-      ul,
-    ]));
-  });
-  sec.appendChild(grid);
-  return sec;
-}
-
-// ── Boot ─────────────────────────────────────────────────────
-function renderAll() {
-  document.getElementById("header-sub").textContent = FORECAST.meta.subtitle;
-  document.getElementById("champ-pill").textContent = "🏆 " + FORECAST.verdict.champion;
-  document.getElementById("footer").textContent = FORECAST.meta.disclaimer + " · Gegenereerd: " + FORECAST.meta.generatedAt;
-  renderNav();
-  const main = document.getElementById("main");
-  main.appendChild(renderVerdict());
-  main.appendChild(renderPoules());
-  main.appendChild(renderBracket());
-  main.appendChild(renderNederland());
-  main.appendChild(renderTopscorers());
-  main.appendChild(renderScorito());
-}
-
-renderAll();
-</script>
+<nav aria-label="Secties">
+<label for="t-verdict"><span class="ico" aria-hidden="true">🏆</span><span class="lbl">Verdict</span></label>
+<label for="t-poules"><span class="ico" aria-hidden="true">📋</span><span class="lbl">Poules</span></label>
+<label for="t-bracket"><span class="ico" aria-hidden="true">⚔️</span><span class="lbl">Bracket</span></label>
+<label for="t-nederland"><span class="ico" aria-hidden="true">🇳🇱</span><span class="lbl">Oranje</span></label>
+<label for="t-topscorers"><span class="ico" aria-hidden="true">🥇</span><span class="lbl">Prijzen</span></label>
+<label for="t-scorito"><span class="ico" aria-hidden="true">🎯</span><span class="lbl">Scorito</span></label>
+</nav>
+<main>
+<section class="tab" id="tab-verdict">
+    <div class="hero">
+      <div class="kicker">De voorspelling van de agent council</div>
+      <div class="trophy" aria-hidden="true">🏆</div>
+      <div class="name">Spanje</div>
+      <div><span class="chip">Wereldkampioen 2026</span></div>
+      <div class="scoreline">
+        <div class="t"><span class="f">🇪🇸</span><span>Spanje</span></div>
+        <div class="sc">2 – 1</div>
+        <div class="t"><span class="f">🏴󠁧󠁢󠁥󠁮󠁧󠁿</span><span>Engeland</span></div>
+      </div>
+      <div class="meta">FINALE · 19 jul · MetLife Stadium</div>
+    </div>
+    <div class="card goldc"><h3>Het oordeel van de council</h3><p class="bodytext">Spanje wordt op 19 juli 2026 in het MetLife Stadium wereldkampioen door Engeland met 2-1 te verslaan — een remake van de EK-finale 2024 met hetzelfde script: Yamal opent, Kane maakt gelijk, en Oyarzabal schiet (alweer) laat de winnende binnen. Spanje is de enige ploeg die acht wedstrijden lang de wedstrijd dicteert in plaats van ondergaat.</p></div>
+    <div class="card"><h3>Kernargumenten</h3><ol class="args"><li>Markt én modellen wijzen dezelfde kant op: Spanje is bookmaker-favoriet (+450) en heeft volgens Opta met 98,5% de hoogste kwalificatiekans van alle 48 landen.</li><li>De EK 2024-kern zit in zijn prime, en Yamal is na zijn hamstring-opbouwschema precies vanaf de knock-outfase weer vol belastbaar.</li><li>Finale-DNA: EK 2024 gewonnen (2-1 vs Engeland, Oyarzabal 86'), Nations League 2023 gewonnen; de NL-finale 2025 ging pas na penalty's verloren.</li><li>Het bracket-pad klopt: Frankrijk wacht pas in de halve finale — exact het duel dat Spanje op EK 2024 won (2-1).</li><li>Council-proces: elk onderdeel is door een verse, context-loze criticus geverifieerd; twee afkeuringen zijn verwerkt (o.a. de volledige Gouden Schoen-herberekening waardoor Kane Mbappé klopt op assists).</li></ol></div>
+    <h2 class="section">De favorieten gewogen</h2>
+    <div class="fav"><div class="card">
+      <div class="fav-head"><span class="f">🇪🇸</span><span class="nm">Spanje</span><span class="odds">+450 (favoriet)</span></div>
+      <span class="endchip win">🏆 Wereldkampioen</span>
+      <p>Beste middenveld ter wereld (Pedri, Fabián Ruiz), Yamal vanaf de knock-outs op volle toeren en een defensie die in 8 duels maar 4 goals weggeeft. De enige topploeg zonder zwakke plek.</p>
+    </div>
+<div class="card">
+      <div class="fav-head"><span class="f">🇫🇷</span><span class="nm">Frankrijk</span><span class="odds">+500</span></div>
+      <span class="endchip">3e plaats</span>
+      <p>Het plafond is intact (maart: zeges op Brazilië én Colombia), maar de wisselvalligheid ook (1-2 verlies tegen Ivoorkust op 4 juni). Strandt in de halve finale opnieuw op Spanje; Mbappé troost zich met 8 goals.</p>
+    </div>
+<div class="card">
+      <div class="fav-head"><span class="f">🏴󠁧󠁢󠁥󠁮󠁧󠁿</span><span class="nm">Engeland</span><span class="odds">+700</span></div>
+      <span class="endchip">Verliezend finalist</span>
+      <p>Tuchels Engeland is geen galavoetbal maar Duits-efficiënt: compact, dodelijk bij standaardsituaties, met Kane in de vorm van zijn leven (61 goals bij Bayern). Schakelt Brazilië én Argentinië uit, maar in de finale is Spanje gewoon beter.</p>
+    </div>
+<div class="card">
+      <div class="fav-head"><span class="f">🇧🇷</span><span class="nm">Brazilië</span><span class="odds">+850</span></div>
+      <span class="endchip">Kwartfinale</span>
+      <p>Wint zonder Rodrygo en Militão alsnog poule C en overleeft een Haaland-spektakel (3-2), maar de defensie zonder Militão is precies waar Kane leeft: 1-2 tegen Engeland in de Miami-hitte.</p>
+    </div>
+<div class="card">
+      <div class="fav-head"><span class="f">🇵🇹</span><span class="nm">Portugal</span><span class="odds">+850</span></div>
+      <span class="endchip">Kwartfinale</span>
+      <p>Te diep voor poule K en Zwitserland (déjà vu 2022), maar in de kwartfinale zakt een 41-jarige Ronaldo met hamstringverleden door de fysieke ondergrens: 0-2 tegen Argentinië in het allerlaatste Messi-Ronaldo-duel.</p>
+    </div>
+<div class="card">
+      <div class="fav-head"><span class="f">🇦🇷</span><span class="nm">Argentinië</span><span class="odds">+1000</span></div>
+      <span class="endchip">4e plaats</span>
+      <p>De titelverdediger wint toernooi-volwassen van Uruguay, Turkije en Portugal, maar in de halve finale lopen de oudere benen (Messi 39 op 24 juni) vast op een vers Engels monsterblok.</p>
+    </div>
+<div class="card">
+      <div class="fav-head"><span class="f">🇩🇪</span><span class="nm">Duitsland</span><span class="odds">+1300</span></div>
+      <span class="endchip">Achtste finale</span>
+      <p>Walst door poule E en Tsjechië, maar treft in de achtste finale meteen Frankrijk: Mbappés diepgang tegen de hoge Duitse lijn is precies de wedstrijd die Deschamps-voetbal wint (1-2).</p>
+    </div>
+<div class="card">
+      <div class="fav-head"><span class="f">🇳🇱</span><span class="nm">Nederland</span><span class="odds">+1600</span></div>
+      <span class="endchip nl">Ronde van 32</span>
+      <p>Wint poule F, maar de perfecte storm in Monterrey (hitte, halve defensie afwezig, Marokko met CL-winnaar Hakimi) wordt Oranje in de ronde van 32 fataal: 1-2. Zie het Nederland-tabblad.</p>
+    </div></div>
+  </section>
+<section class="tab" id="tab-poules">
+    <p class="lead">Voorspelde eindstanden van alle twaalf poules.</p>
+    <div class="legend">
+      <span><i style="background:var(--green)"></i>Top 2: direct door</span>
+      <span><i style="background:var(--gold)"></i>Door als beste nummer 3</span>
+      <span><i style="background:rgba(255,255,255,.25)"></i>Uitgeschakeld</span>
+    </div>
+    <p class="swipe-hint">← swipe door de poules →</p>
+    <div class="rail"><div class="card">
+    <span class="gletter" aria-hidden="true">A</span>
+    <h3>Poule A</h3>
+    <div class="grow advance">
+      <span class="pos">1</span><span>🇲🇽 Mexico</span><span class="pts">9 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇰🇷 Zuid-Korea</span><span class="pts">4 pt</span>
+    </div><div class="grow third">
+      <span class="pos">3</span><span>🇨🇿 Tsjechië</span><span class="pts">4 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇿🇦 Zuid-Afrika</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">Mexico wint vlekkeloos: het Azteca op 2.200 m hoogte, 8 duels ongeslagen in 2026 en een 5-1 tegen Servië als generale. Zuid-Korea pakt P2 op doelsaldo na 1-1 tegen Tsjechië.</div>
+  </div>
+<div class="card">
+    <span class="gletter" aria-hidden="true">B</span>
+    <h3>Poule B</h3>
+    <div class="grow advance">
+      <span class="pos">1</span><span>🇨🇭 Zwitserland</span><span class="pts">7 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇨🇦 Canada</span><span class="pts">5 pt</span>
+    </div><div class="grow third">
+      <span class="pos">3</span><span>🇧🇦 Bosnië-Herzegovina</span><span class="pts">4 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇶🇦 Qatar</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">Canada mist Davies (hamstring) in de opener en morst punten; het degelijke Zwitserland profiteert. Bosnië — dat Italië uit de play-offs knikkerde — gaat als sterke nummer 3 door.</div>
+  </div>
+<div class="card">
+    <span class="gletter" aria-hidden="true">C</span>
+    <h3>Poule C</h3>
+    <div class="grow advance">
+      <span class="pos">1</span><span>🇧🇷 Brazilië</span><span class="pts">9 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇲🇦 Marokko</span><span class="pts">6 pt</span>
+    </div><div class="grow out">
+      <span class="pos">3</span><span>🏴󠁧󠁢󠁳󠁣󠁴󠁿 Schotland</span><span class="pts">3 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇭🇹 Haïti</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">Brazilië wint ook zonder Rodrygo en Militão alle drie de duels (vorm: 6-2 vs Panama, 2-1 vs Egypte). Marokko (FIFA #7, kern van 2022 intact) comfortabel tweede; Schotlands 3 punten zijn te weinig.</div>
+  </div>
+<div class="card">
+    <span class="gletter" aria-hidden="true">D</span>
+    <h3>Poule D</h3>
+    <div class="grow advance">
+      <span class="pos">1</span><span>🇺🇸 Verenigde Staten</span><span class="pts">7 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇹🇷 Turkije</span><span class="pts">7 pt</span>
+    </div><div class="grow third">
+      <span class="pos">3</span><span>🇵🇾 Paraguay</span><span class="pts">3 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇦🇺 Australië</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">VS–Turkije eindigt gelijk; de VS pakken P1 op doelsaldo met westkust-thuisvoordeel (de 1-2 tegen Duitsland was een schoonheidsfoutje). Turkijes gouden generatie (Güler, Yıldız) gaat ruim door; Paraguay wint het duel om P3.</div>
+  </div>
+<div class="card">
+    <span class="gletter" aria-hidden="true">E</span>
+    <h3>Poule E</h3>
+    <div class="grow advance">
+      <span class="pos">1</span><span>🇩🇪 Duitsland</span><span class="pts">9 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇨🇮 Ivoorkust</span><span class="pts">4 pt</span>
+    </div><div class="grow third">
+      <span class="pos">3</span><span>🇪🇨 Ecuador</span><span class="pts">4 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇨🇼 Curaçao</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">Duitsland walst door de poule (4-0 vs Finland, 2-1 bij de VS — ook zonder Gnabry). Ivoorkust pakt op momentum (2-1 op Frankrijk!) P2 boven Ecuador na 1-1 onderling; beide nummers 2 en 3 zijn hier sterk.</div>
+  </div>
+<div class="card">
+    <span class="gletter" aria-hidden="true">F</span>
+    <h3>Poule F</h3>
+    <div class="grow advance nlrow">
+      <span class="pos">1</span><span>🇳🇱 Nederland</span><span class="pts">7 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇯🇵 Japan</span><span class="pts">5 pt</span>
+    </div><div class="grow third">
+      <span class="pos">3</span><span>🇸🇪 Zweden</span><span class="pts">4 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇹🇳 Tunesië</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">Nederland wint de poule met 7 punten, niet met 9: de openingstest tegen het georganiseerde Japan eindigt 1-1 — zonder Simons hapert de creatieve verbinding. Daarna is de as Van Dijk–De Jong–Gakpo te sterk voor Zweden (2-0) en Tunesië (2-0). Japan tweede; Zweden gaat dankzij Gyökeres als nummer 3 door.</div>
+  </div>
+<div class="card">
+    <span class="gletter" aria-hidden="true">G</span>
+    <h3>Poule G</h3>
+    <div class="grow advance">
+      <span class="pos">1</span><span>🇧🇪 België</span><span class="pts">9 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇪🇬 Egypte</span><span class="pts">4 pt</span>
+    </div><div class="grow third">
+      <span class="pos">3</span><span>🇮🇷 Iran</span><span class="pts">4 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇳🇿 Nieuw-Zeeland</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">België is in bloedvorm (2-0 vs Kroatië, 5-0 vs Tunesië): 9 punten, geen discussie. Egypte en Iran houden elkaar op 1-1; Salahs Egypte tweede op doelsaldo, Iran gaat als nummer 3 door.</div>
+  </div>
+<div class="card">
+    <span class="gletter" aria-hidden="true">H</span>
+    <h3>Poule H</h3>
+    <div class="grow advance">
+      <span class="pos">1</span><span>🇪🇸 Spanje</span><span class="pts">9 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇺🇾 Uruguay</span><span class="pts">6 pt</span>
+    </div><div class="grow out">
+      <span class="pos">3</span><span>🇸🇦 Saoedi-Arabië</span><span class="pts">3 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇨🇻 Kaapverdië</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">Spanje (Opta: 98,5% kwalificatiekans, hoogste van het toernooi) pakt het maximum; Yamal wordt rustig opgebouwd. Uruguay degelijk tweede; Saoedi-Arabiës 3 punten met -3 vallen buiten de beste nummers 3.</div>
+  </div>
+<div class="card">
+    <span class="gletter" aria-hidden="true">I</span>
+    <h3>Poule I</h3>
+    <div class="grow advance">
+      <span class="pos">1</span><span>🇫🇷 Frankrijk</span><span class="pts">9 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇳🇴 Noorwegen</span><span class="pts">6 pt</span>
+    </div><div class="grow third">
+      <span class="pos">3</span><span>🇸🇳 Senegal</span><span class="pts">3 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇮🇶 Irak</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">Frankrijk herstelt zich van de Ivoorkust-dreun en wint alles — Mbappé is fit. Haaland (16 kwalificatiegoals) beslist het sleutelduel met Senegal: Noorwegen tweede, Senegal als nummer 3 nipt door.</div>
+  </div>
+<div class="card">
+    <span class="gletter" aria-hidden="true">J</span>
+    <h3>Poule J</h3>
+    <div class="grow advance">
+      <span class="pos">1</span><span>🇦🇷 Argentinië</span><span class="pts">9 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇦🇹 Oostenrijk</span><span class="pts">4 pt</span>
+    </div><div class="grow third">
+      <span class="pos">3</span><span>🇩🇿 Algerije</span><span class="pts">4 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇯🇴 Jordanië</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">Titelverdediger Argentinië foutloos (Messi fit, aanvoerder op zijn zesde WK). Oostenrijk–Algerije eindigt 1-1; Rangnicks ploeg tweede op doelsaldo, maar Algerije (dat Nederland versloeg op 3 juni!) gaat óók door.</div>
+  </div>
+<div class="card">
+    <span class="gletter" aria-hidden="true">K</span>
+    <h3>Poule K</h3>
+    <div class="grow advance">
+      <span class="pos">1</span><span>🇵🇹 Portugal</span><span class="pts">9 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇨🇴 Colombia</span><span class="pts">6 pt</span>
+    </div><div class="grow out">
+      <span class="pos">3</span><span>🇨🇩 DR Congo</span><span class="pts">3 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇺🇿 Uzbekistan</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">Portugal is te diep voor Colombia, ook met een twijfelende Ronaldo (41): Bruno Fernandes draagt het. DR Congo wint het duel om P3 van Uzbekistan, maar strandt op doelsaldo buiten de beste 8.</div>
+  </div>
+<div class="card">
+    <span class="gletter" aria-hidden="true">L</span>
+    <h3>Poule L</h3>
+    <div class="grow advance">
+      <span class="pos">1</span><span>🏴󠁧󠁢󠁥󠁮󠁧󠁿 Engeland</span><span class="pts">9 pt</span>
+    </div><div class="grow advance">
+      <span class="pos">2</span><span>🇭🇷 Kroatië</span><span class="pts">6 pt</span>
+    </div><div class="grow out">
+      <span class="pos">3</span><span>🇬🇭 Ghana</span><span class="pts">3 pt</span>
+    </div><div class="grow out">
+      <span class="pos">4</span><span>🇵🇦 Panama</span><span class="pts">0 pt</span>
+    </div>
+    <div class="gnote">Engeland (Opta: 67,5% groepswinst) controleert en Kane prikt: 4 groepsgoals. Kroatiës toernooi-DNA is ruim genoeg voor P2; Ghana wint alleen van Panama en valt buiten de beste nummers 3.</div>
+  </div></div>
+    <h2 class="section">De strijd om de beste nummers 3</h2>
+    <p class="lead">Acht van de twaalf nummers 3 gaan door naar de ronde van 32.</p>
+    <div class="card"><div class="thirds"><span class="in">🇪🇨 Ecuador (4 pt, +1) ✓</span><span class="in">🇮🇷 Iran (4 pt, +1) ✓</span><span class="in">🇸🇪 Zweden (4 pt, 0) ✓</span><span class="in">🇩🇿 Algerije (4 pt, 0) ✓</span><span class="in">🇧🇦 Bosnië (4 pt, -1) ✓</span><span class="in">🇨🇿 Tsjechië (4 pt, -2) ✓</span><span class="in">🇸🇳 Senegal (3 pt, -1) ✓</span><span class="in">🇵🇾 Paraguay (3 pt, -2) ✓</span><span class="uit">🇨🇩 DR Congo (3 pt, -2) ✕</span><span class="uit">🇬🇭 Ghana (3 pt, -2) ✕</span><span class="uit">🏴󠁧󠁢󠁳󠁣󠁴󠁿 Schotland (3 pt, -3) ✕</span><span class="uit">🇸🇦 Saoedi-Arabië (3 pt, -3) ✕</span></div></div>
+  </section>
+<section class="tab" id="tab-bracket">
+    <div class="seg" role="tablist" aria-label="Toernooironde"><label for="r-0">1/16e</label><label for="r-1">1/8e</label><label for="r-2">KF</label><label for="r-3">HF</label><label for="r-4">Finale</label></div>
+    <div class="round-pane" id="pane-0">
+    <p class="lead">Ronde van 32 — tik op een wedstrijd voor de onderbouwing.</p>
+    <div class="matches"><details class="m">
+    <summary>
+      <span class="lbl"><span>M73 · 28 jun · Inglewood</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇰🇷</span><span class="n">Zuid-Korea</span><span class="s">1</span>
+    </span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇨🇦</span><span class="n">Canada ✓</span><span class="s">2</span>
+    </span>
+    </summary>
+    <div class="note">Quasi-thuiswedstrijd voor Canada; David en de teruggekeerde Davies maken fysiek het verschil tegen een Korea met veel reiskilometers.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M74 · 29 jun · Foxborough</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇩🇪</span><span class="n">Duitsland ✓</span><span class="s">3</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇨🇿</span><span class="n">Tsjechië</span><span class="s">0</span>
+    </span>
+    </summary>
+    <div class="note">Klasseverschil te groot; de Duitse machine draait na een dominante groepsfase.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M75 · 29 jun · Monterrey</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row lose nlteam">
+      <span class="f" aria-hidden="true">🇳🇱</span><span class="n">Nederland</span><span class="s">1</span>
+    </span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇲🇦</span><span class="n">Marokko ✓</span><span class="s">2</span>
+    </span>
+    </summary>
+    <div class="note">De perfecte storm tegen Oranje: 35°C+ in Monterrey, vijf afwezige basisspelers, en Marokko volledig intact met CL-winnaar Hakimi. Gakpo zet NL op voorsprong, Brahim Díaz maakt gelijk en Hakimi beslist in minuut 81 op de counter.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M76 · 29 jun · Houston</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇧🇷</span><span class="n">Brazilië ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇯🇵</span><span class="n">Japan</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Japan blijft compact, maar Vinícius beslist het in de tweede helft — te veel individuele kwaliteit.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M77 · 30 jun · East Rutherford</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇫🇷</span><span class="n">Frankrijk ✓</span><span class="s">3</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇮🇷</span><span class="n">Iran</span><span class="s">0</span>
+    </span>
+    </summary>
+    <div class="note">Tegen Irans lage blok is Mbappés diepgang dodelijk; de Ivoorkust-nederlaag was de wake-upcall.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M78 · 30 jun · Arlington</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇨🇮</span><span class="n">Ivoorkust</span><span class="s">1</span>
+    </span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇳🇴</span><span class="n">Noorwegen ✓</span><span class="s">2</span>
+    </span>
+    </summary>
+    <div class="note">Ivoorkust piekte te vroeg met de zege op Frankrijk; geen antwoord op Haalands loopacties.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M79 · 30 jun · Mexico-Stad</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇲🇽</span><span class="n">Mexico ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇸🇪</span><span class="n">Zweden</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Azteca op 2.200 meter met 87.000 fans is een onneembare vesting voor een niet-geacclimatiseerd Zweden.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M80 · 1 jul · Atlanta</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🏴󠁧󠁢󠁥󠁮󠁧󠁿</span><span class="n">Engeland ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇪🇨</span><span class="n">Ecuador</span><span class="s">0</span>
+    </span>
+    </summary>
+    <div class="note">Kane scoort; Ecuador mist de creativiteit om Tuchels defensie open te breken.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M81 · 1 jul · Santa Clara</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇺🇸</span><span class="n">Verenigde Staten ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇧🇦</span><span class="n">Bosnië-Herzegovina</span><span class="s">0</span>
+    </span>
+    </summary>
+    <div class="note">Thuisvoordeel, Pulisic op dreef; Bosnië was als nummer 3 al tevreden.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M82 · 1 jul · Seattle</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇧🇪</span><span class="n">België ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇸🇳</span><span class="n">Senegal</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">De Bruynes laatste toernooi-magie en Doku's dribbels breken het fysieke blok nét open — zwoegen in Seattle.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M83 · 2 jul · Toronto</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇨🇴</span><span class="n">Colombia ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇭🇷</span><span class="n">Kroatië</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Jongere benen en Luis Díaz in vorm; Modrić (40) loopt na 70 minuten leeg in de derde wedstrijd in twaalf dagen.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M84 · 2 jul · Inglewood</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇪🇸</span><span class="n">Spanje ✓</span><span class="s">3</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇦🇹</span><span class="n">Oostenrijk</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Rangnick-pressing houdt het een helft vol; daarna tikken Pedri en Yamal het uit. Yamal scoort — hij is er weer.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M85 · 2 jul · Vancouver</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇨🇭</span><span class="n">Zwitserland ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇩🇿</span><span class="n">Algerije</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">De degelijkste toernooiploeg van Europa; Algerije stunt niet twee keer in één maand.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M86 · 3 jul · Miami</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇦🇷</span><span class="n">Argentinië ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇺🇾</span><span class="n">Uruguay</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Remake van de allereerste WK-finale (1930), maar Miami is letterlijk Messi's thuisstadion. Messi scoort.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M87 · 3 jul · Kansas City</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇵🇹</span><span class="n">Portugal ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇵🇾</span><span class="n">Paraguay</span><span class="s">0</span>
+    </span>
+    </summary>
+    <div class="note">Zelfs met een twijfelende Ronaldo te breed: Bruno Fernandes en Félix nemen het over.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M88 · 3 jul · Arlington</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇹🇷</span><span class="n">Turkije ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇪🇬</span><span class="n">Egypte</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Güler en Yıldız hebben meer creativiteit dan een Egypte dat te veel op Salah leunt.</div>
+  </details></div>
+  </div>
+<div class="round-pane" id="pane-1">
+    <p class="lead">Achtste finales — tik op een wedstrijd voor de onderbouwing.</p>
+    <div class="matches"><details class="m">
+    <summary>
+      <span class="lbl"><span>M89 · 4 jul · Philadelphia</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇩🇪</span><span class="n">Duitsland</span><span class="s">1</span>
+    </span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇫🇷</span><span class="n">Frankrijk ✓</span><span class="s">2</span>
+    </span>
+    </summary>
+    <div class="note">De klassieker van deze ronde: Mbappés snelheid tegen de hoge Duitse lijn is precies de wedstrijd die Deschamps-voetbal wint.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M90 · 4 jul · Houston</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇨🇦</span><span class="n">Canada</span><span class="s">0</span>
+    </span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇲🇦</span><span class="n">Marokko ✓</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">In de Houston-hitte is Marokko's geduldige stijl superieur; Regragui's blok geeft niets weg en Brahim Díaz prikt de enige goal.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M91 · 5 jul · East Rutherford</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇧🇷</span><span class="n">Brazilië ✓</span><span class="s">3</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇳🇴</span><span class="n">Noorwegen</span><span class="s">2</span>
+    </span>
+    </summary>
+    <div class="note">Spektakelstuk: Haaland scoort twee keer, maar Noorwegen heeft achterin geen antwoord op Vinícius en Raphinha.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M92 · 5 jul · Mexico-Stad</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇲🇽</span><span class="n">Mexico</span><span class="s">1</span>
+    </span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🏴󠁧󠁢󠁥󠁮󠁧󠁿</span><span class="n">Engeland ✓</span><span class="s">2</span>
+    </span>
+    </summary>
+    <div class="note">De zwaarste horde: Azteca, hoogte, 90.000 man — maar Kane en Bellingham beslissen het. Engelands eerste echte statement.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M93 · 6 jul · Arlington</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇨🇴</span><span class="n">Colombia</span><span class="s">1</span>
+    </span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇪🇸</span><span class="n">Spanje ✓</span><span class="s">2</span>
+    </span>
+    </summary>
+    <div class="note">Colombia geeft de favoriet een lastige avond, maar Spanjes middenveld droogt Díaz' aanvoer op.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M94 · 6 jul · Seattle · (n.v.)</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇺🇸</span><span class="n">Verenigde Staten ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇧🇪</span><span class="n">België</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Revanche voor 2014: thuisvoordeel, een vermoeid Belgisch blok, en Pulisic in de verlenging als nationale held.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M95 · 7 jul · Atlanta</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇦🇷</span><span class="n">Argentinië ✓</span><span class="s">3</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇹🇷</span><span class="n">Turkije</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Turkse bravoure houdt een helft stand, dan kantelt de regerend wereldkampioen het.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M96 · 7 jul · Vancouver</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇨🇭</span><span class="n">Zwitserland</span><span class="s">1</span>
+    </span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇵🇹</span><span class="n">Portugal ✓</span><span class="s">3</span>
+    </span>
+    </summary>
+    <div class="note">Déjà vu van WK 2022 (6-1): degelijk maar voorspelbaar Zwitserland tegen te veel Portugese wapens.</div>
+  </details></div>
+  </div>
+<div class="round-pane" id="pane-2">
+    <p class="lead">Kwartfinales — tik op een wedstrijd voor de onderbouwing.</p>
+    <div class="matches"><details class="m">
+    <summary>
+      <span class="lbl"><span>M97 · 9 jul · Foxborough</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇫🇷</span><span class="n">Frankrijk ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇲🇦</span><span class="n">Marokko</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Remake van de halve finale 2022: heroïsch Marokko, maar zonder echte afmaker (En-Nesyri buiten de selectie) één niveau tekort. Mbappé en Olise scoren; Brahim Díaz doet wat terug.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M98 · 10 jul · Inglewood</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇪🇸</span><span class="n">Spanje ✓</span><span class="s">3</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇺🇸</span><span class="n">Verenigde Staten</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Het Spaanse positiespel ontmantelt Pochettino's pressing; Yamal, Olmo en Oyarzabal scoren, Pulisic redt de eer.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M99 · 11 jul · Miami</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇧🇷</span><span class="n">Brazilië</span><span class="s">1</span>
+    </span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🏴󠁧󠁢󠁥󠁮󠁧󠁿</span><span class="n">Engeland ✓</span><span class="s">2</span>
+    </span>
+    </summary>
+    <div class="note">Brazilië domineert de bal maar loopt in het mes: Saka en Bellingham counteren de defensie zonder Militão kapot. In de Miami-middaghitte wint de best georganiseerde ploeg.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M100 · 11 jul · Kansas City</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇦🇷</span><span class="n">Argentinië ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇵🇹</span><span class="n">Portugal</span><span class="s">0</span>
+    </span>
+    </summary>
+    <div class="note">Messi vs Ronaldo, de allerlaatste keer — en het eindigt zoals de carrières lopen: Messi en Álvarez beslissen, Ronaldo (41) zakt door de fysieke ondergrens.</div>
+  </details></div>
+  </div>
+<div class="round-pane" id="pane-3">
+    <p class="lead">Halve finales — tik op een wedstrijd voor de onderbouwing.</p>
+    <div class="matches"><details class="m">
+    <summary>
+      <span class="lbl"><span>M101 · 14 jul · Arlington</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇫🇷</span><span class="n">Frankrijk</span><span class="s">1</span>
+    </span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇪🇸</span><span class="n">Spanje ✓</span><span class="s">2</span>
+    </span>
+    </summary>
+    <div class="note">Remake van de EK-halve finale 2024, zelfde uitkomst en zelfde reden: Spanje pakt Frankrijk de bal af én dekt Mbappés counter structureel af. Pedri en Oyarzabal scoren; Mbappé doet wat terug.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M102 · 15 jul · Atlanta</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🏴󠁧󠁢󠁥󠁮󠁧󠁿</span><span class="n">Engeland ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇦🇷</span><span class="n">Argentinië</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Zesde wedstrijd in 24 dagen voor de titelverdediger met een 39-jarige als spil. Kane opent uit een corner-afval, Álvarez maakt gelijk, maar de Engelse bank (Watkins) beslist het slotkwartier.</div>
+  </details></div>
+  </div>
+<div class="round-pane" id="pane-4">
+    <p class="lead">Finale &amp; troostfinale — tik op een wedstrijd voor de onderbouwing.</p>
+    <div class="matches"><details class="m finalcard">
+    <summary>
+      <span class="lbl"><span>M104 · FINALE · 19 jul · MetLife Stadium</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇪🇸</span><span class="n">Spanje ✓</span><span class="s">2</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🏴󠁧󠁢󠁥󠁮󠁧󠁿</span><span class="n">Engeland</span><span class="s">1</span>
+    </span>
+    </summary>
+    <div class="note">Het EK 2024-script herhaalt zich: Yamal opent vanaf rechts, Kane kopt gelijk, en in de slotfase schiet Oyarzabal — alweer — de winnende binnen. Spanje pakt zijn tweede ster.</div>
+  </details>
+<details class="m">
+    <summary>
+      <span class="lbl"><span>M103 · Troostfinale · 18 jul · Miami</span><span class="chev" aria-hidden="true">▾</span></span>
+      <span class="row win">
+      <span class="f" aria-hidden="true">🇫🇷</span><span class="n">Frankrijk ✓</span><span class="s">3</span>
+    </span>
+      <span class="row lose">
+      <span class="f" aria-hidden="true">🇦🇷</span><span class="n">Argentinië</span><span class="s">2</span>
+    </span>
+    </summary>
+    <div class="note">Remake van de finale 2022, nu zonder inzet en dus mét goals. Mbappé, Dembélé en Olise scoren; Lautaro Martínez 2x voor een roterend Argentinië (zonder Messi).</div>
+  </details></div>
+  </div>
+    <p class="tap-hint">Het pad van 🇳🇱 Oranje is oranje gemarkeerd, winnaars goud.</p>
+  </section>
+<section class="tab" id="tab-nederland">
+    <div class="card nl-hero">
+      <div class="flag" aria-hidden="true">🇳🇱</div>
+      <div class="fin">Ronde van 32 — uitgeschakeld door Marokko (1-2)</div>
+      <p class="bodytext">Oranje wint poule F met 7 punten, maar de loting is wreed: als groepswinnaar wacht in Monterrey meteen Marokko, de nummer 2 van de Brazilië-poule en halvefinalist van 2022 met de kern volledig intact. In de middaghitte van 35°C+, met een geïmproviseerde defensie en zonder creatieve motor, eindigt het WK van Nederland op 29 juni — eerder dan de odds (+1600, 8e favoriet) suggereren, maar de council is unaniem: deze ploeg mist dit toernooi simpelweg te veel.</p>
+    </div>
+    <h2 class="section">Het pad van Oranje</h2>
+    <div class="card"><div class="tl"><div class="tl-step">
+      <span class="tl-badge G">G</span>
+      <div class="tl-round">Groepsfase · 14 juni · Arlington</div>
+      <div class="tl-fix">Nederland – Japan<span class="res">1-1</span></div>
+      <div class="tl-why">Dé sleuteltest: Japan (FIFA #18) is precies het georganiseerde, counterende type tegenstander waar dit Oranje tegen worstelt. Zonder Simons ontbreekt de verbinding tussen middenveld en aanval.</div>
+    </div>
+<div class="tl-step">
+      <span class="tl-badge W">W</span>
+      <div class="tl-round">Groepsfase · 20 juni · Houston</div>
+      <div class="tl-fix">Nederland – Zweden<span class="res">2-0</span></div>
+      <div class="tl-why">Zweden (1-3 verlies tegen Noorwegen, buiten Gyökeres weinig dreiging) is een maat te klein voor de as Van Dijk–De Jong–Gakpo.</div>
+    </div>
+<div class="tl-step">
+      <span class="tl-badge W">W</span>
+      <div class="tl-round">Groepsfase · 25 juni · Kansas City</div>
+      <div class="tl-fix">Tunesië – Nederland<span class="res">0-2</span></div>
+      <div class="tl-why">Tunesië (0-5 weggespeeld door België) is in het slotduel een prooi. Nederland groepswinnaar met 7 punten.</div>
+    </div>
+<div class="tl-step">
+      <span class="tl-badge V">V</span>
+      <div class="tl-round">Ronde van 32 · 29 juni · Monterrey</div>
+      <div class="tl-fix">Nederland – Marokko<span class="res">1-2</span></div>
+      <div class="tl-why">De perfecte storm: 35°C+ middaghitte, vijf afwezige basisspelers, en Hakimi die als kersverse Champions League-winnaar exact in Oranjes kwetsbare zone speelt. Gakpo opent nog, maar Brahim Díaz en Hakimi (81', counter) maken een einde aan de WK-droom. Bono houdt de rest tegen, zoals in 2022.</div>
+    </div></div></div>
+    <div class="card"><h3>Selectie &amp; vorm</h3><p class="bodytext">Koeman mist een halve ruggengraat: Xavi Simons (kruisband), De Ligt (rug), De Vrij (lies), Schouten (kruisband) én Jurriën Timber (lies, noodvervanger Geertruida). De vorm onderstreept het: 0-1 verlies tegen Algerije (3 juni) en een moeizame 2-1 tegen Uzbekistan (rode kaart Til, winnende penalty van Gakpo in minuut 98). De as Van Dijk–Frenkie de Jong–Gakpo is goed genoeg voor de poule, niet voor een fitte top-10-tegenstander.</p></div>
+  </section>
+<section class="tab" id="tab-topscorers">
+    <h2 class="section" style="margin-top:6px">🥇 Gouden Schoen</h2>
+    <div class="podium"><div class="pod p2">
+      <div class="medal" aria-hidden="true">🥈</div>
+      <div class="pf" aria-hidden="true">🇫🇷</div>
+      <div class="pn">Kylian Mbappé</div>
+      <div class="pg">8</div><div class="pgl">goals</div>
+    </div><div class="pod p1">
+      <div class="medal" aria-hidden="true">🥇</div>
+      <div class="pf" aria-hidden="true">🏴󠁧󠁢󠁥󠁮󠁧󠁿</div>
+      <div class="pn">Harry Kane</div>
+      <div class="pg">8</div><div class="pgl">goals</div>
+    </div><div class="pod p3">
+      <div class="medal" aria-hidden="true">🥉</div>
+      <div class="pf" aria-hidden="true">🇪🇸</div>
+      <div class="pn">Lamine Yamal</div>
+      <div class="pg">6</div><div class="pgl">goals</div>
+    </div></div>
+    <div class="card"><div class="ts-row">
+      <span class="rk">1</span>
+      <div class="ts-main">
+        <div class="ts-name">🏴󠁧󠁢󠁥󠁮󠁧󠁿 Harry Kane <small>· Engeland</small></div>
+        <div class="ts-note">4 in de groep + R32 + R16 + HF + finale. Wint de Gouden Schoen op de tiebreak: bij 8-8 met Mbappé tellen eerst assists (Kane 3, Mbappé 2). Komt van een 61-goalseizoen bij Bayern.</div>
+      </div>
+      <span class="ts-goals">8</span>
+    </div>
+<div class="ts-row">
+      <span class="rk">2</span>
+      <div class="ts-main">
+        <div class="ts-name">🇫🇷 Kylian Mbappé <small>· Frankrijk</small></div>
+        <div class="ts-note">Scoort in 6 van zijn 8 duels, inclusief KF, HF en troostfinale — maar grijpt op assists (2 om 3) naast de prijs. Evenaart wel zijn 2022-totaal.</div>
+      </div>
+      <span class="ts-goals">8</span>
+    </div>
+<div class="ts-row">
+      <span class="rk">3</span>
+      <div class="ts-main">
+        <div class="ts-name">🇪🇸 Lamine Yamal <small>· Spanje</small></div>
+        <div class="ts-note">Brace in groepsduel 2, goal in duel 3 (na zijn minutenopbouw), daarna R32, KF en de openingsgoal in de finale. Plus 4 assists.</div>
+      </div>
+      <span class="ts-goals">6</span>
+    </div>
+<div class="ts-row">
+      <span class="rk">4</span>
+      <div class="ts-main">
+        <div class="ts-name">🇳🇴 Erling Haaland <small>· Noorwegen</small></div>
+        <div class="ts-note">3 in de groep + 2 in de verloren achtste finale tegen Brazilië. Klopt Messi bij gelijke goals én assists (2-2) op minste minuten: ±437 om ±610.</div>
+      </div>
+      <span class="ts-goals">5</span>
+    </div>
+<div class="ts-row">
+      <span class="rk">5</span>
+      <div class="ts-main">
+        <div class="ts-name">🇦🇷 Lionel Messi <small>· Argentinië</small></div>
+        <div class="ts-note">3 groepsgoals (waarvan 2 penalty's) + R32 + KF tegen Portugal. Scaloni managet zijn minuten (±76 per duel); de troostfinale slaat hij over.</div>
+      </div>
+      <span class="ts-goals">5</span>
+    </div></div>
+    <h2 class="section">Individuele prijzen</h2>
+    <div class="awards"><div class="card">
+      <h3>🏅 Gouden Bal</h3>
+      <div class="who">Lamine Yamal · Spanje</div>
+      <p>6 goals, 4 assists, betrokken bij 10 treffers en de openingsgoal in de finale. De motor van de wereldkampioen — op zijn 19e (jarig op 13 juli, zes dagen vóór de finale).</p>
+    </div>
+<div class="card">
+      <h3>🧤 Gouden Handschoen</h3>
+      <div class="who">Unai Simón · Spanje</div>
+      <p>4 clean sheets (2 in de groep + R32 + R16) en slechts 4 tegengoals in 8 duels. De keeper van de kampioen met de beste defensie.</p>
+    </div>
+<div class="card">
+      <h3>🌟 Beste Jongere</h3>
+      <div class="who">Lamine Yamal · Spanje</div>
+      <p>Voldoet ruim aan de cutoff (geboren 13-7-2007, grens is 1-1-2005). Tweede grote toernooiprijs op rij na EK 2024 — geen discussie in de jury. Alternatief als FIFA spreidt: Pau Cubarsí.</p>
+    </div></div>
+  </section>
+<section class="tab" id="tab-scorito">
+    <div class="card"><h3>Spelregels in het kort</h3><p class="bodytext">Scorito WK is een voorspellingsspel: uitslagen van alle 104 wedstrijden, topscorer-picks per fase en landenvoorspellingen. Goals tellen per positie: <strong>verdediger 4×, middenvelder 2×, aanvaller 1×</strong>, oplopend per ronde (verdediger: 64 pt in de groepsfase → 192 pt in de finale). Landenbonus: <strong>250 pt voor de juiste wereldkampioen</strong>, 120 pt per juiste finalist, 75 pt per juiste eindpositie in de groep. Let op: bronnen verschillen over de exacte uitslag-punten (45/30 vs 90/60 per wedstrijd) — check de actuele regels in de app. Deadline groepsfase: 11 juni.</p></div>
+    <div class="card accent"><h3 style="color:var(--oranje)">⭐ Gouden tip</h3><p class="bodytext">Zet <strong>Spanje als wereldkampioen</strong> (250 pt) en <strong>Spanje + Engeland als finalisten</strong> (2× 120 pt). Voorspel voorzichtige uitslagen (1-0, 2-1, 1-1) — die renderen statistisch het best. En benut de 4×-multiplier: één goal van een verdediger in de finale (192 pt) is meer waard dan vier spitsengoals in de groepsfase.</p></div>
+    <h2 class="section">Ronde-strategie</h2>
+    <div class="card"><ol class="steps"><li>Groepsfase (deadline 11 juni): volg de 12 poule-eindstanden van dit rapport; tip bij favorieten 2-0/3-0, bij krakers (NL–Japan, VS–Turkije, Engeland–Kroatië) 1-1 of 2-1.</li><li>Topscorers groepsfase: Kane en Mbappé als bankers, aangevuld met Bellingham/Pedri (2×) en Laporte (4×).</li><li>Wissel per knock-outronde naar spelers van ploegen die in dit bracket doorgaan: vanaf de kwartfinale alleen nog Spanje-, Engeland-, Frankrijk- en Argentinië-spelers.</li><li>Nederland: tip groepswinst poule F (75 pt eindpositie) maar géén lange knock-outrun — in dit bracket strandt Oranje in de ronde van 32 tegen Marokko.</li><li>Valkuilen: Bruno Fernandes (Portugal eruit in de KF), Haaland ná de achtste finale, en Oyarzabal als topscorer-pick (scoort pas laat in het toernooi: KF, HF en finale).</li></ol></div>
+    <h2 class="section">De picks</h2>
+    <div class="pickgrid"><div class="card"><h3>Verdedigers<span class="mult">4× punten</span></h3><ul class="picks"><li>
+        <div><span class="pp">🇪🇸 Aymeric Laporte</span><span class="pt2"> · Spanje</span></div>
+        <div class="pw">Kopsterk bij standaardsituaties, basisspeler naast Cubarsí, 8 duels bij de kampioen. Dé maximale-waarde-pick (Huijsen en alle Real Madrid-spelers zitten níét in de selectie).</div>
+      </li><li>
+        <div><span class="pp">🏴󠁧󠁢󠁥󠁮󠁧󠁿 John Stones</span><span class="pt2"> · Engeland</span></div>
+        <div class="pw">Tuchels corner-routine is hét Engelse wapen en Stones is de vaste eerste-paal-aanvaller; 8 duels bij de finalist. ⚠️ Risico: blessuregevoelig, slechts 4 interlands onder Tuchel.</div>
+      </li><li>
+        <div><span class="pp">🇫🇷 Dayot Upamecano</span><span class="pt2"> · Frankrijk</span></div>
+        <div class="pw">Fysiek dominant kopgevaar, 8 duels inclusief doelpuntrijke troostfinale. ⚠️ Risico: driestrijd met Konaté en Saliba om twee plekken.</div>
+      </li></ul></div>
+<div class="card"><h3>Middenvelders<span class="mult">2× punten</span></h3><ul class="picks"><li>
+        <div><span class="pp">🏴󠁧󠁢󠁥󠁮󠁧󠁿 Jude Bellingham</span><span class="pt2"> · Engeland</span></div>
+        <div class="pw">De facto tweede spits met late box-runs; scoort in dit bracket o.a. in de KF tegen Brazilië. ⚠️ Kaartgevoelig: één schorsing kost een knock-outduel.</div>
+      </li><li>
+        <div><span class="pp">🇪🇸 Pedri</span><span class="pt2"> · Spanje</span></div>
+        <div class="pw">Scoort in de halve finale tegen Frankrijk en deelt assists uit als verlengstuk van Yamal. De la Fuente managet zijn minuten in de groepsfase.</div>
+      </li></ul></div>
+<div class="card"><h3>Aanvallers<span class="mult">1× punten</span></h3><ul class="picks"><li>
+        <div><span class="pp">🏴󠁧󠁢󠁥󠁮󠁧󠁿 Harry Kane</span><span class="pt2"> · Engeland</span></div>
+        <div class="pw">Onze Gouden Schoen (8 goals), eerste penaltynemer, scoort van groepsfase tot en met finale.</div>
+      </li><li>
+        <div><span class="pp">🇫🇷 Kylian Mbappé</span><span class="pt2"> · Frankrijk</span></div>
+        <div class="pw">Ook 8 goals, verspreid over 6 duels — de troostfinale is zijn goalmine, net als in elke fase ervoor.</div>
+      </li><li>
+        <div><span class="pp">🇪🇸 Lamine Yamal</span><span class="pt2"> · Spanje</span></div>
+        <div class="pw">Vanaf de knock-outs vol belastbaar; 6 goals + 4 assists en de Gouden Bal. Voor de latere rondes de beste Spaanse pick.</div>
+      </li></ul></div></div>
+  </section>
+</main>
+<footer>Voorspelling op basis van odds, vorm, selecties en bracket-analyse per 10 juni 2026 — geen garantie, wel beslissend. · Gegenereerd: 10 juni 2026</footer>
 </body>
 </html>
