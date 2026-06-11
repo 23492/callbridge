@@ -143,20 +143,202 @@
 // FORECAST DATA — gevuld door de agent council (zie commit log)
 // ============================================================
 const FORECAST = window.__FORECAST_DATA__ = {
-  meta: { generatedAt: "", subtitle: "", disclaimer: "" },
-  verdict: { champion: "", championFlag: "", runnerUp: "", finalScore: "", summary: "", keyArguments: [] },
-  favorites: [],            // { team, flag, odds, endStation, analysis }
-  groups: [],               // { letter, analysis, teams: [{ name, flag, pos, pts, status: "advance"|"third"|"out", nl?: true }] }
-  bestThirds: [],           // [{ team, flag, advances: bool }]
-  bracket: { r32: [], r16: [], qf: [], sf: [], thirdPlace: null, final: null },
-                            // match: { label, home, homeFlag, away, awayFlag, score, winner, note }
-  netherlands: { group: "", finish: "", summary: "", squadNotes: "", path: [] },
-                            // path step: { round, fixture, result, win: bool, why }
-  topscorers: [],           // { rank, player, team, flag, goals, note }
-  awards: [],               // { title, winner, team, why }
-  scoritoRules: "",
-  scorito: { strategy: [], captain: "", picks: { Keepers: [], Verdedigers: [], Middenvelders: [], Aanvallers: [] } }
-                            // pick: { player, team, flag, why }
+  meta: {
+    generatedAt: "10 juni 2026",
+    subtitle: "Agent council: 6 voorspellingsagents + 5 onafhankelijke critici · alle onderdelen geverifieerd vóór publicatie",
+    disclaimer: "Voorspelling op basis van odds, vorm, selecties en bracket-analyse per 10 juni 2026 — geen garantie, wel beslissend."
+  },
+  verdict: {
+    champion: "Spanje", championFlag: "🇪🇸",
+    runnerUp: "Engeland", finalScore: "2-1",
+    summary: "Spanje wordt op 19 juli 2026 in het MetLife Stadium wereldkampioen door Engeland met 2-1 te verslaan — een remake van de EK-finale 2024 met hetzelfde script: Yamal opent, Kane maakt gelijk, en Oyarzabal schiet (alweer) laat de winnende binnen. Spanje is de enige ploeg die acht wedstrijden lang de wedstrijd dicteert in plaats van ondergaat.",
+    keyArguments: [
+      "Markt én modellen wijzen dezelfde kant op: Spanje is bookmaker-favoriet (+450) en heeft volgens Opta met 98,5% de hoogste kwalificatiekans van alle 48 landen.",
+      "De EK 2024-kern zit in zijn prime, en Yamal is na zijn hamstring-opbouwschema precies vanaf de knock-outfase weer vol belastbaar.",
+      "Finale-DNA: EK 2024 gewonnen (2-1 vs Engeland, Oyarzabal 86'), Nations League 2023 gewonnen; de NL-finale 2025 ging pas na penalty's verloren.",
+      "Het bracket-pad klopt: Frankrijk wacht pas in de halve finale — exact het duel dat Spanje op EK 2024 won (2-1).",
+      "Council-proces: elk onderdeel is door een verse, context-loze criticus geverifieerd; twee afkeuringen zijn verwerkt (o.a. de volledige Gouden Schoen-herberekening waardoor Kane Mbappé klopt op assists)."
+    ]
+  },
+  favorites: [
+    { team: "Spanje", flag: "🇪🇸", odds: "+450 (favoriet)", endStation: "🏆 Wereldkampioen", analysis: "Beste middenveld ter wereld (Pedri, Fabián Ruiz), Yamal vanaf de knock-outs op volle toeren en een defensie die in 8 duels maar 4 goals weggeeft. De enige topploeg zonder zwakke plek." },
+    { team: "Frankrijk", flag: "🇫🇷", odds: "+500", endStation: "3e plaats", analysis: "Het plafond is intact (maart: zeges op Brazilië én Colombia), maar de wisselvalligheid ook (1-2 verlies tegen Ivoorkust op 4 juni). Strandt in de halve finale opnieuw op Spanje; Mbappé troost zich met 8 goals." },
+    { team: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", odds: "+700", endStation: "Verliezend finalist", analysis: "Tuchels Engeland is geen galavoetbal maar Duits-efficiënt: compact, dodelijk bij standaardsituaties, met Kane in de vorm van zijn leven (61 goals bij Bayern). Schakelt Brazilië én Argentinië uit, maar in de finale is Spanje gewoon beter." },
+    { team: "Brazilië", flag: "🇧🇷", odds: "+850", endStation: "Kwartfinale", analysis: "Wint zonder Rodrygo en Militão alsnog poule C en overleeft een Haaland-spektakel (3-2), maar de defensie zonder Militão is precies waar Kane leeft: 1-2 tegen Engeland in de Miami-hitte." },
+    { team: "Portugal", flag: "🇵🇹", odds: "+850", endStation: "Kwartfinale", analysis: "Te diep voor poule K en Zwitserland (déjà vu 2022), maar in de kwartfinale zakt een 41-jarige Ronaldo met hamstringverleden door de fysieke ondergrens: 0-2 tegen Argentinië in het allerlaatste Messi-Ronaldo-duel." },
+    { team: "Argentinië", flag: "🇦🇷", odds: "+1000", endStation: "4e plaats", analysis: "De titelverdediger wint toernooi-volwassen van Uruguay, Turkije en Portugal, maar in de halve finale lopen de oudere benen (Messi 39 op 24 juni) vast op een vers Engels monsterblok." },
+    { team: "Duitsland", flag: "🇩🇪", odds: "+1300", endStation: "Achtste finale", analysis: "Walst door poule E en Tsjechië, maar treft in de achtste finale meteen Frankrijk: Mbappés diepgang tegen de hoge Duitse lijn is precies de wedstrijd die Deschamps-voetbal wint (1-2)." },
+    { team: "Nederland", flag: "🇳🇱", odds: "+1600", endStation: "Ronde van 32", analysis: "Wint poule F, maar de perfecte storm in Monterrey (hitte, halve defensie afwezig, Marokko met CL-winnaar Hakimi) wordt Oranje in de ronde van 32 fataal: 1-2. Zie het Nederland-tabblad." }
+  ],
+  groups: [
+    { letter: "A", analysis: "Mexico wint vlekkeloos: het Azteca op 2.200 m hoogte, 8 duels ongeslagen in 2026 en een 5-1 tegen Servië als generale. Zuid-Korea pakt P2 op doelsaldo na 1-1 tegen Tsjechië.", teams: [
+      { name: "Mexico", flag: "🇲🇽", pos: 1, pts: 9, status: "advance" },
+      { name: "Zuid-Korea", flag: "🇰🇷", pos: 2, pts: 4, status: "advance" },
+      { name: "Tsjechië", flag: "🇨🇿", pos: 3, pts: 4, status: "third" },
+      { name: "Zuid-Afrika", flag: "🇿🇦", pos: 4, pts: 0, status: "out" } ] },
+    { letter: "B", analysis: "Canada mist Davies (hamstring) in de opener en morst punten; het degelijke Zwitserland profiteert. Bosnië — dat Italië uit de play-offs knikkerde — gaat als sterke nummer 3 door.", teams: [
+      { name: "Zwitserland", flag: "🇨🇭", pos: 1, pts: 7, status: "advance" },
+      { name: "Canada", flag: "🇨🇦", pos: 2, pts: 5, status: "advance" },
+      { name: "Bosnië-Herzegovina", flag: "🇧🇦", pos: 3, pts: 4, status: "third" },
+      { name: "Qatar", flag: "🇶🇦", pos: 4, pts: 0, status: "out" } ] },
+    { letter: "C", analysis: "Brazilië wint ook zonder Rodrygo en Militão alle drie de duels (vorm: 6-2 vs Panama, 2-1 vs Egypte). Marokko (FIFA #7, kern van 2022 intact) comfortabel tweede; Schotlands 3 punten zijn te weinig.", teams: [
+      { name: "Brazilië", flag: "🇧🇷", pos: 1, pts: 9, status: "advance" },
+      { name: "Marokko", flag: "🇲🇦", pos: 2, pts: 6, status: "advance" },
+      { name: "Schotland", flag: "🏴󠁧󠁢󠁳󠁣󠁴󠁿", pos: 3, pts: 3, status: "out" },
+      { name: "Haïti", flag: "🇭🇹", pos: 4, pts: 0, status: "out" } ] },
+    { letter: "D", analysis: "VS–Turkije eindigt gelijk; de VS pakken P1 op doelsaldo met westkust-thuisvoordeel (de 1-2 tegen Duitsland was een schoonheidsfoutje). Turkijes gouden generatie (Güler, Yıldız) gaat ruim door; Paraguay wint het duel om P3.", teams: [
+      { name: "Verenigde Staten", flag: "🇺🇸", pos: 1, pts: 7, status: "advance" },
+      { name: "Turkije", flag: "🇹🇷", pos: 2, pts: 7, status: "advance" },
+      { name: "Paraguay", flag: "🇵🇾", pos: 3, pts: 3, status: "third" },
+      { name: "Australië", flag: "🇦🇺", pos: 4, pts: 0, status: "out" } ] },
+    { letter: "E", analysis: "Duitsland walst door de poule (4-0 vs Finland, 2-1 bij de VS — ook zonder Gnabry). Ivoorkust pakt op momentum (2-1 op Frankrijk!) P2 boven Ecuador na 1-1 onderling; beide nummers 2 en 3 zijn hier sterk.", teams: [
+      { name: "Duitsland", flag: "🇩🇪", pos: 1, pts: 9, status: "advance" },
+      { name: "Ivoorkust", flag: "🇨🇮", pos: 2, pts: 4, status: "advance" },
+      { name: "Ecuador", flag: "🇪🇨", pos: 3, pts: 4, status: "third" },
+      { name: "Curaçao", flag: "🇨🇼", pos: 4, pts: 0, status: "out" } ] },
+    { letter: "F", analysis: "Nederland wint de poule met 7 punten, niet met 9: de openingstest tegen het georganiseerde Japan eindigt 1-1 — zonder Simons hapert de creatieve verbinding. Daarna is de as Van Dijk–De Jong–Gakpo te sterk voor Zweden (2-0) en Tunesië (2-0). Japan tweede; Zweden gaat dankzij Gyökeres als nummer 3 door.", teams: [
+      { name: "Nederland", flag: "🇳🇱", pos: 1, pts: 7, status: "advance", nl: true },
+      { name: "Japan", flag: "🇯🇵", pos: 2, pts: 5, status: "advance" },
+      { name: "Zweden", flag: "🇸🇪", pos: 3, pts: 4, status: "third" },
+      { name: "Tunesië", flag: "🇹🇳", pos: 4, pts: 0, status: "out" } ] },
+    { letter: "G", analysis: "België is in bloedvorm (2-0 vs Kroatië, 5-0 vs Tunesië): 9 punten, geen discussie. Egypte en Iran houden elkaar op 1-1; Salahs Egypte tweede op doelsaldo, Iran gaat als nummer 3 door.", teams: [
+      { name: "België", flag: "🇧🇪", pos: 1, pts: 9, status: "advance" },
+      { name: "Egypte", flag: "🇪🇬", pos: 2, pts: 4, status: "advance" },
+      { name: "Iran", flag: "🇮🇷", pos: 3, pts: 4, status: "third" },
+      { name: "Nieuw-Zeeland", flag: "🇳🇿", pos: 4, pts: 0, status: "out" } ] },
+    { letter: "H", analysis: "Spanje (Opta: 98,5% kwalificatiekans, hoogste van het toernooi) pakt het maximum; Yamal wordt rustig opgebouwd. Uruguay degelijk tweede; Saoedi-Arabiës 3 punten met -3 vallen buiten de beste nummers 3.", teams: [
+      { name: "Spanje", flag: "🇪🇸", pos: 1, pts: 9, status: "advance" },
+      { name: "Uruguay", flag: "🇺🇾", pos: 2, pts: 6, status: "advance" },
+      { name: "Saoedi-Arabië", flag: "🇸🇦", pos: 3, pts: 3, status: "out" },
+      { name: "Kaapverdië", flag: "🇨🇻", pos: 4, pts: 0, status: "out" } ] },
+    { letter: "I", analysis: "Frankrijk herstelt zich van de Ivoorkust-dreun en wint alles — Mbappé is fit. Haaland (16 kwalificatiegoals) beslist het sleutelduel met Senegal: Noorwegen tweede, Senegal als nummer 3 nipt door.", teams: [
+      { name: "Frankrijk", flag: "🇫🇷", pos: 1, pts: 9, status: "advance" },
+      { name: "Noorwegen", flag: "🇳🇴", pos: 2, pts: 6, status: "advance" },
+      { name: "Senegal", flag: "🇸🇳", pos: 3, pts: 3, status: "third" },
+      { name: "Irak", flag: "🇮🇶", pos: 4, pts: 0, status: "out" } ] },
+    { letter: "J", analysis: "Titelverdediger Argentinië foutloos (Messi fit, aanvoerder op zijn zesde WK). Oostenrijk–Algerije eindigt 1-1; Rangnicks ploeg tweede op doelsaldo, maar Algerije (dat Nederland versloeg op 3 juni!) gaat óók door.", teams: [
+      { name: "Argentinië", flag: "🇦🇷", pos: 1, pts: 9, status: "advance" },
+      { name: "Oostenrijk", flag: "🇦🇹", pos: 2, pts: 4, status: "advance" },
+      { name: "Algerije", flag: "🇩🇿", pos: 3, pts: 4, status: "third" },
+      { name: "Jordanië", flag: "🇯🇴", pos: 4, pts: 0, status: "out" } ] },
+    { letter: "K", analysis: "Portugal is te diep voor Colombia, ook met een twijfelende Ronaldo (41): Bruno Fernandes draagt het. DR Congo wint het duel om P3 van Uzbekistan, maar strandt op doelsaldo buiten de beste 8.", teams: [
+      { name: "Portugal", flag: "🇵🇹", pos: 1, pts: 9, status: "advance" },
+      { name: "Colombia", flag: "🇨🇴", pos: 2, pts: 6, status: "advance" },
+      { name: "DR Congo", flag: "🇨🇩", pos: 3, pts: 3, status: "out" },
+      { name: "Uzbekistan", flag: "🇺🇿", pos: 4, pts: 0, status: "out" } ] },
+    { letter: "L", analysis: "Engeland (Opta: 67,5% groepswinst) controleert en Kane prikt: 4 groepsgoals. Kroatiës toernooi-DNA is ruim genoeg voor P2; Ghana wint alleen van Panama en valt buiten de beste nummers 3.", teams: [
+      { name: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", pos: 1, pts: 9, status: "advance" },
+      { name: "Kroatië", flag: "🇭🇷", pos: 2, pts: 6, status: "advance" },
+      { name: "Ghana", flag: "🇬🇭", pos: 3, pts: 3, status: "out" },
+      { name: "Panama", flag: "🇵🇦", pos: 4, pts: 0, status: "out" } ] }
+  ],
+  bestThirds: [
+    { team: "Ecuador (4 pt, +1)", flag: "🇪🇨", advances: true },
+    { team: "Iran (4 pt, +1)", flag: "🇮🇷", advances: true },
+    { team: "Zweden (4 pt, 0)", flag: "🇸🇪", advances: true },
+    { team: "Algerije (4 pt, 0)", flag: "🇩🇿", advances: true },
+    { team: "Bosnië (4 pt, -1)", flag: "🇧🇦", advances: true },
+    { team: "Tsjechië (4 pt, -2)", flag: "🇨🇿", advances: true },
+    { team: "Senegal (3 pt, -1)", flag: "🇸🇳", advances: true },
+    { team: "Paraguay (3 pt, -2)", flag: "🇵🇾", advances: true },
+    { team: "DR Congo (3 pt, -2)", flag: "🇨🇩", advances: false },
+    { team: "Ghana (3 pt, -2)", flag: "🇬🇭", advances: false },
+    { team: "Schotland (3 pt, -3)", flag: "🏴󠁧󠁢󠁳󠁣󠁴󠁿", advances: false },
+    { team: "Saoedi-Arabië (3 pt, -3)", flag: "🇸🇦", advances: false }
+  ],
+  bracket: {
+    r32: [
+      { label: "M73 · 28 jun · Inglewood", home: "Zuid-Korea", homeFlag: "🇰🇷", away: "Canada", awayFlag: "🇨🇦", score: "1-2", winner: "Canada", note: "Quasi-thuiswedstrijd voor Canada; David en de teruggekeerde Davies maken fysiek het verschil tegen een Korea met veel reiskilometers." },
+      { label: "M74 · 29 jun · Foxborough", home: "Duitsland", homeFlag: "🇩🇪", away: "Tsjechië", awayFlag: "🇨🇿", score: "3-0", winner: "Duitsland", note: "Klasseverschil te groot; de Duitse machine draait na een dominante groepsfase." },
+      { label: "M75 · 29 jun · Monterrey", home: "Nederland", homeFlag: "🇳🇱", away: "Marokko", awayFlag: "🇲🇦", score: "1-2", winner: "Marokko", note: "De perfecte storm tegen Oranje: 35°C+ in Monterrey, vijf afwezige basisspelers, en Marokko volledig intact met CL-winnaar Hakimi. Gakpo zet NL op voorsprong, Brahim Díaz maakt gelijk en Hakimi beslist in minuut 81 op de counter." },
+      { label: "M76 · 29 jun · Houston", home: "Brazilië", homeFlag: "🇧🇷", away: "Japan", awayFlag: "🇯🇵", score: "2-1", winner: "Brazilië", note: "Japan blijft compact, maar Vinícius beslist het in de tweede helft — te veel individuele kwaliteit." },
+      { label: "M77 · 30 jun · East Rutherford", home: "Frankrijk", homeFlag: "🇫🇷", away: "Iran", awayFlag: "🇮🇷", score: "3-0", winner: "Frankrijk", note: "Tegen Irans lage blok is Mbappés diepgang dodelijk; de Ivoorkust-nederlaag was de wake-upcall." },
+      { label: "M78 · 30 jun · Arlington", home: "Ivoorkust", homeFlag: "🇨🇮", away: "Noorwegen", awayFlag: "🇳🇴", score: "1-2", winner: "Noorwegen", note: "Ivoorkust piekte te vroeg met de zege op Frankrijk; geen antwoord op Haalands loopacties." },
+      { label: "M79 · 30 jun · Mexico-Stad", home: "Mexico", homeFlag: "🇲🇽", away: "Zweden", awayFlag: "🇸🇪", score: "2-1", winner: "Mexico", note: "Azteca op 2.200 meter met 87.000 fans is een onneembare vesting voor een niet-geacclimatiseerd Zweden." },
+      { label: "M80 · 1 jul · Atlanta", home: "Engeland", homeFlag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", away: "Ecuador", awayFlag: "🇪🇨", score: "2-0", winner: "Engeland", note: "Kane scoort; Ecuador mist de creativiteit om Tuchels defensie open te breken." },
+      { label: "M81 · 1 jul · Santa Clara", home: "Verenigde Staten", homeFlag: "🇺🇸", away: "Bosnië-Herzegovina", awayFlag: "🇧🇦", score: "2-0", winner: "Verenigde Staten", note: "Thuisvoordeel, Pulisic op dreef; Bosnië was als nummer 3 al tevreden." },
+      { label: "M82 · 1 jul · Seattle", home: "België", homeFlag: "🇧🇪", away: "Senegal", awayFlag: "🇸🇳", score: "2-1", winner: "België", note: "De Bruynes laatste toernooi-magie en Doku's dribbels breken het fysieke blok nét open — zwoegen in Seattle." },
+      { label: "M83 · 2 jul · Toronto", home: "Colombia", homeFlag: "🇨🇴", away: "Kroatië", awayFlag: "🇭🇷", score: "2-1", winner: "Colombia", note: "Jongere benen en Luis Díaz in vorm; Modrić (40) loopt na 70 minuten leeg in de derde wedstrijd in twaalf dagen." },
+      { label: "M84 · 2 jul · Inglewood", home: "Spanje", homeFlag: "🇪🇸", away: "Oostenrijk", awayFlag: "🇦🇹", score: "3-1", winner: "Spanje", note: "Rangnick-pressing houdt het een helft vol; daarna tikken Pedri en Yamal het uit. Yamal scoort — hij is er weer." },
+      { label: "M85 · 2 jul · Vancouver", home: "Zwitserland", homeFlag: "🇨🇭", away: "Algerije", awayFlag: "🇩🇿", score: "2-1", winner: "Zwitserland", note: "De degelijkste toernooiploeg van Europa; Algerije stunt niet twee keer in één maand." },
+      { label: "M86 · 3 jul · Miami", home: "Argentinië", homeFlag: "🇦🇷", away: "Uruguay", awayFlag: "🇺🇾", score: "2-1", winner: "Argentinië", note: "Remake van de allereerste WK-finale (1930), maar Miami is letterlijk Messi's thuisstadion. Messi scoort." },
+      { label: "M87 · 3 jul · Kansas City", home: "Portugal", homeFlag: "🇵🇹", away: "Paraguay", awayFlag: "🇵🇾", score: "2-0", winner: "Portugal", note: "Zelfs met een twijfelende Ronaldo te breed: Bruno Fernandes en Félix nemen het over." },
+      { label: "M88 · 3 jul · Arlington", home: "Turkije", homeFlag: "🇹🇷", away: "Egypte", awayFlag: "🇪🇬", score: "2-1", winner: "Turkije", note: "Güler en Yıldız hebben meer creativiteit dan een Egypte dat te veel op Salah leunt." }
+    ],
+    r16: [
+      { label: "M89 · 4 jul · Philadelphia", home: "Duitsland", homeFlag: "🇩🇪", away: "Frankrijk", awayFlag: "🇫🇷", score: "1-2", winner: "Frankrijk", note: "De klassieker van deze ronde: Mbappés snelheid tegen de hoge Duitse lijn is precies de wedstrijd die Deschamps-voetbal wint." },
+      { label: "M90 · 4 jul · Houston", home: "Canada", homeFlag: "🇨🇦", away: "Marokko", awayFlag: "🇲🇦", score: "0-1", winner: "Marokko", note: "In de Houston-hitte is Marokko's geduldige stijl superieur; Regragui's blok geeft niets weg en Brahim Díaz prikt de enige goal." },
+      { label: "M91 · 5 jul · East Rutherford", home: "Brazilië", homeFlag: "🇧🇷", away: "Noorwegen", awayFlag: "🇳🇴", score: "3-2", winner: "Brazilië", note: "Spektakelstuk: Haaland scoort twee keer, maar Noorwegen heeft achterin geen antwoord op Vinícius en Raphinha." },
+      { label: "M92 · 5 jul · Mexico-Stad", home: "Mexico", homeFlag: "🇲🇽", away: "Engeland", awayFlag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", score: "1-2", winner: "Engeland", note: "De zwaarste horde: Azteca, hoogte, 90.000 man — maar Kane en Bellingham beslissen het. Engelands eerste echte statement." },
+      { label: "M93 · 6 jul · Arlington", home: "Colombia", homeFlag: "🇨🇴", away: "Spanje", awayFlag: "🇪🇸", score: "1-2", winner: "Spanje", note: "Colombia geeft de favoriet een lastige avond, maar Spanjes middenveld droogt Díaz' aanvoer op." },
+      { label: "M94 · 6 jul · Seattle", home: "Verenigde Staten", homeFlag: "🇺🇸", away: "België", awayFlag: "🇧🇪", score: "2-1 (n.v.)", winner: "Verenigde Staten", note: "Revanche voor 2014: thuisvoordeel, een vermoeid Belgisch blok, en Pulisic in de verlenging als nationale held." },
+      { label: "M95 · 7 jul · Atlanta", home: "Argentinië", homeFlag: "🇦🇷", away: "Turkije", awayFlag: "🇹🇷", score: "3-1", winner: "Argentinië", note: "Turkse bravoure houdt een helft stand, dan kantelt de regerend wereldkampioen het." },
+      { label: "M96 · 7 jul · Vancouver", home: "Zwitserland", homeFlag: "🇨🇭", away: "Portugal", awayFlag: "🇵🇹", score: "1-3", winner: "Portugal", note: "Déjà vu van WK 2022 (6-1): degelijk maar voorspelbaar Zwitserland tegen te veel Portugese wapens." }
+    ],
+    qf: [
+      { label: "M97 · 9 jul · Foxborough", home: "Frankrijk", homeFlag: "🇫🇷", away: "Marokko", awayFlag: "🇲🇦", score: "2-1", winner: "Frankrijk", note: "Remake van de halve finale 2022: heroïsch Marokko, maar zonder echte afmaker (En-Nesyri buiten de selectie) één niveau tekort. Mbappé en Olise scoren; Brahim Díaz doet wat terug." },
+      { label: "M98 · 10 jul · Inglewood", home: "Spanje", homeFlag: "🇪🇸", away: "Verenigde Staten", awayFlag: "🇺🇸", score: "3-1", winner: "Spanje", note: "Het Spaanse positiespel ontmantelt Pochettino's pressing; Yamal, Olmo en Oyarzabal scoren, Pulisic redt de eer." },
+      { label: "M99 · 11 jul · Miami", home: "Brazilië", homeFlag: "🇧🇷", away: "Engeland", awayFlag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", score: "1-2", winner: "Engeland", note: "Brazilië domineert de bal maar loopt in het mes: Saka en Bellingham counteren de defensie zonder Militão kapot. In de Miami-middaghitte wint de best georganiseerde ploeg." },
+      { label: "M100 · 11 jul · Kansas City", home: "Argentinië", homeFlag: "🇦🇷", away: "Portugal", awayFlag: "🇵🇹", score: "2-0", winner: "Argentinië", note: "Messi vs Ronaldo, de allerlaatste keer — en het eindigt zoals de carrières lopen: Messi en Álvarez beslissen, Ronaldo (41) zakt door de fysieke ondergrens." }
+    ],
+    sf: [
+      { label: "M101 · 14 jul · Arlington", home: "Frankrijk", homeFlag: "🇫🇷", away: "Spanje", awayFlag: "🇪🇸", score: "1-2", winner: "Spanje", note: "Remake van de EK-halve finale 2024, zelfde uitkomst en zelfde reden: Spanje pakt Frankrijk de bal af én dekt Mbappés counter structureel af. Pedri en Oyarzabal scoren; Mbappé doet wat terug." },
+      { label: "M102 · 15 jul · Atlanta", home: "Engeland", homeFlag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", away: "Argentinië", awayFlag: "🇦🇷", score: "2-1", winner: "Engeland", note: "Zesde wedstrijd in 24 dagen voor de titelverdediger met een 39-jarige als spil. Kane opent uit een corner-afval, Álvarez maakt gelijk, maar de Engelse bank (Watkins) beslist het slotkwartier." }
+    ],
+    thirdPlace: { label: "M103 · Troostfinale · 18 jul · Miami", home: "Frankrijk", homeFlag: "🇫🇷", away: "Argentinië", awayFlag: "🇦🇷", score: "3-2", winner: "Frankrijk", note: "Remake van de finale 2022, nu zonder inzet en dus mét goals. Mbappé, Dembélé en Olise scoren; Lautaro Martínez 2x voor een roterend Argentinië (zonder Messi)." },
+    final: { label: "M104 · FINALE · 19 jul · MetLife Stadium", home: "Spanje", homeFlag: "🇪🇸", away: "Engeland", awayFlag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", score: "2-1", winner: "Spanje", note: "Het EK 2024-script herhaalt zich: Yamal opent vanaf rechts, Kane kopt gelijk, en in de slotfase schiet Oyarzabal — alweer — de winnende binnen. Spanje pakt zijn tweede ster." }
+  },
+  netherlands: {
+    group: "F",
+    finish: "Ronde van 32 — uitgeschakeld door Marokko (1-2)",
+    summary: "Oranje wint poule F met 7 punten, maar de loting is wreed: als groepswinnaar wacht in Monterrey meteen Marokko, de nummer 2 van de Brazilië-poule en halvefinalist van 2022 met de kern volledig intact. In de middaghitte van 35°C+, met een geïmproviseerde defensie en zonder creatieve motor, eindigt het WK van Nederland op 29 juni — eerder dan de odds (+1600, 8e favoriet) suggereren, maar de council is unaniem: deze ploeg mist dit toernooi simpelweg te veel.",
+    squadNotes: "Koeman mist een halve ruggengraat: Xavi Simons (kruisband), De Ligt (rug), De Vrij (lies), Schouten (kruisband) én Jurriën Timber (lies, noodvervanger Geertruida). De vorm onderstreept het: 0-1 verlies tegen Algerije (3 juni) en een moeizame 2-1 tegen Uzbekistan (rode kaart Til, winnende penalty van Gakpo in minuut 98). De as Van Dijk–Frenkie de Jong–Gakpo is goed genoeg voor de poule, niet voor een fitte top-10-tegenstander.",
+    path: [
+      { round: "Groepsfase · 14 juni · Arlington", fixture: "Nederland – Japan", result: "1-1", win: true, why: "Dé sleuteltest: Japan (FIFA #18) is precies het georganiseerde, counterende type tegenstander waar dit Oranje tegen worstelt. Zonder Simons ontbreekt de verbinding tussen middenveld en aanval." },
+      { round: "Groepsfase · 20 juni · Houston", fixture: "Nederland – Zweden", result: "2-0", win: true, why: "Zweden (1-3 verlies tegen Noorwegen, buiten Gyökeres weinig dreiging) is een maat te klein voor de as Van Dijk–De Jong–Gakpo." },
+      { round: "Groepsfase · 25 juni · Kansas City", fixture: "Tunesië – Nederland", result: "0-2", win: true, why: "Tunesië (0-5 weggespeeld door België) is in het slotduel een prooi. Nederland groepswinnaar met 7 punten." },
+      { round: "Ronde van 32 · 29 juni · Monterrey", fixture: "Nederland – Marokko", result: "1-2", win: false, why: "De perfecte storm: 35°C+ middaghitte, vijf afwezige basisspelers, en Hakimi die als kersverse Champions League-winnaar exact in Oranjes kwetsbare zone speelt. Gakpo opent nog, maar Brahim Díaz en Hakimi (81', counter) maken een einde aan de WK-droom. Bono houdt de rest tegen, zoals in 2022." }
+    ]
+  },
+  topscorers: [
+    { rank: 1, player: "Harry Kane", team: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", goals: 8, note: "4 in de groep + R32 + R16 + HF + finale. Wint de Gouden Schoen op de tiebreak: bij 8-8 met Mbappé tellen eerst assists (Kane 3, Mbappé 2). Komt van een 61-goalseizoen bij Bayern." },
+    { rank: 2, player: "Kylian Mbappé", team: "Frankrijk", flag: "🇫🇷", goals: 8, note: "Scoort in 6 van zijn 8 duels, inclusief KF, HF en troostfinale — maar grijpt op assists (2 om 3) naast de prijs. Evenaart wel zijn 2022-totaal." },
+    { rank: 3, player: "Lamine Yamal", team: "Spanje", flag: "🇪🇸", goals: 6, note: "Brace in groepsduel 2, goal in duel 3 (na zijn minutenopbouw), daarna R32, KF en de openingsgoal in de finale. Plus 4 assists." },
+    { rank: 4, player: "Erling Haaland", team: "Noorwegen", flag: "🇳🇴", goals: 5, note: "3 in de groep + 2 in de verloren achtste finale tegen Brazilië. Klopt Messi bij gelijke goals én assists (2-2) op minste minuten: ±437 om ±610." },
+    { rank: 5, player: "Lionel Messi", team: "Argentinië", flag: "🇦🇷", goals: 5, note: "3 groepsgoals (waarvan 2 penalty's) + R32 + KF tegen Portugal. Scaloni managet zijn minuten (±76 per duel); de troostfinale slaat hij over." }
+  ],
+  awards: [
+    { title: "🏅 Gouden Bal", winner: "Lamine Yamal", team: "Spanje", why: "6 goals, 4 assists, betrokken bij 10 treffers en de openingsgoal in de finale. De motor van de wereldkampioen — op zijn 19e (jarig op 13 juli, zes dagen vóór de finale)." },
+    { title: "🧤 Gouden Handschoen", winner: "Unai Simón", team: "Spanje", why: "4 clean sheets (2 in de groep + R32 + R16) en slechts 4 tegengoals in 8 duels. De keeper van de kampioen met de beste defensie." },
+    { title: "🌟 Beste Jongere", winner: "Lamine Yamal", team: "Spanje", why: "Voldoet ruim aan de cutoff (geboren 13-7-2007, grens is 1-1-2005). Tweede grote toernooiprijs op rij na EK 2024 — geen discussie in de jury. Alternatief als FIFA spreidt: Pau Cubarsí." }
+  ],
+  scoritoRules: "Scorito WK is een voorspellingsspel: uitslagen van alle 104 wedstrijden, topscorer-picks per fase en landenvoorspellingen. Goals tellen per positie: <strong>verdediger 4×, middenvelder 2×, aanvaller 1×</strong>, oplopend per ronde (verdediger: 64 pt in de groepsfase → 192 pt in de finale). Landenbonus: <strong>250 pt voor de juiste wereldkampioen</strong>, 120 pt per juiste finalist, 75 pt per juiste eindpositie in de groep. Let op: bronnen verschillen over de exacte uitslag-punten (45/30 vs 90/60 per wedstrijd) — check de actuele regels in de app. Deadline groepsfase: 11 juni.",
+  scorito: {
+    captain: "Zet <strong>Spanje als wereldkampioen</strong> (250 pt) en <strong>Spanje + Engeland als finalisten</strong> (2× 120 pt). Voorspel voorzichtige uitslagen (1-0, 2-1, 1-1) — die renderen statistisch het best. En benut de 4×-multiplier: één goal van een verdediger in de finale (192 pt) is meer waard dan vier spitsengoals in de groepsfase.",
+    strategy: [
+      "Groepsfase (deadline 11 juni): volg de 12 poule-eindstanden van dit rapport; tip bij favorieten 2-0/3-0, bij krakers (NL–Japan, VS–Turkije, Engeland–Kroatië) 1-1 of 2-1.",
+      "Topscorers groepsfase: Kane en Mbappé als bankers, aangevuld met Bellingham/Pedri (2×) en Laporte (4×).",
+      "Wissel per knock-outronde naar spelers van ploegen die in dit bracket doorgaan: vanaf de kwartfinale alleen nog Spanje-, Engeland-, Frankrijk- en Argentinië-spelers.",
+      "Nederland: tip groepswinst poule F (75 pt eindpositie) maar géén lange knock-outrun — in dit bracket strandt Oranje in de ronde van 32 tegen Marokko.",
+      "Valkuilen: Bruno Fernandes (Portugal eruit in de KF), Haaland ná de achtste finale, en Oyarzabal als topscorer-pick (scoort pas laat in het toernooi: KF, HF en finale)."
+    ],
+    picks: {
+      "Verdedigers (4× punten)": [
+        { player: "Aymeric Laporte", team: "Spanje", flag: "🇪🇸", why: "Kopsterk bij standaardsituaties, basisspeler naast Cubarsí, 8 duels bij de kampioen. Dé maximale-waarde-pick (Huijsen en alle Real Madrid-spelers zitten níét in de selectie)." },
+        { player: "John Stones", team: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", why: "Tuchels corner-routine is hét Engelse wapen en Stones is de vaste eerste-paal-aanvaller; 8 duels bij de finalist. ⚠️ Risico: blessuregevoelig, slechts 4 interlands onder Tuchel." },
+        { player: "Dayot Upamecano", team: "Frankrijk", flag: "🇫🇷", why: "Fysiek dominant kopgevaar, 8 duels inclusief doelpuntrijke troostfinale. ⚠️ Risico: driestrijd met Konaté en Saliba om twee plekken." }
+      ],
+      "Middenvelders (2× punten)": [
+        { player: "Jude Bellingham", team: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", why: "De facto tweede spits met late box-runs; scoort in dit bracket o.a. in de KF tegen Brazilië. ⚠️ Kaartgevoelig: één schorsing kost een knock-outduel." },
+        { player: "Pedri", team: "Spanje", flag: "🇪🇸", why: "Scoort in de halve finale tegen Frankrijk en deelt assists uit als verlengstuk van Yamal. De la Fuente managet zijn minuten in de groepsfase." }
+      ],
+      "Aanvallers (1× punten)": [
+        { player: "Harry Kane", team: "Engeland", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", why: "Onze Gouden Schoen (8 goals), eerste penaltynemer, scoort van groepsfase tot en met finale." },
+        { player: "Kylian Mbappé", team: "Frankrijk", flag: "🇫🇷", why: "Ook 8 goals, verspreid over 6 duels — de troostfinale is zijn goalmine, net als in elke fase ervoor." },
+        { player: "Lamine Yamal", team: "Spanje", flag: "🇪🇸", why: "Vanaf de knock-outs vol belastbaar; 6 goals + 4 assists en de Gouden Bal. Voor de latere rondes de beste Spaanse pick." }
+      ]
+    }
+  }
 };
 
 // ============================================================
@@ -370,7 +552,7 @@ function renderScorito() {
     sec.appendChild(el("div", { class: "card" }, [el("h3", {}, "Spelregels in het kort"), el("p", { html: FORECAST.scoritoRules })]));
   }
   if (s.captain) {
-    sec.appendChild(el("div", { class: "card accent" }, [el("h3", {}, "⭐ Kapitein"), el("p", { html: s.captain })]));
+    sec.appendChild(el("div", { class: "card accent" }, [el("h3", {}, "⭐ Gouden tip"), el("p", { html: s.captain })]));
   }
   const grid = el("div", { class: "grid cols-2" });
   Object.entries(s.picks).forEach(([pos, picks]) => {
