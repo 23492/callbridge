@@ -7,7 +7,7 @@ import Security
 
 // MARK: - Version & Update Config
 
-let appVersion = "2.0.5"
+let appVersion = "2.0.6"
 let updateManifestURL = "https://raw.githubusercontent.com/23492/callbridge/main/callbridge-update.json"
 let updatePublicKey = "ylneUBx4bMQxiX9rsDkKtya1InBHUzlbfsEOwpvFA2E="
 
