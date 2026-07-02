@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 # Lazy-initialized Salesforce connection
 _sf = None
 
+# Lazy-initialized Id of the API user (SF_USERNAME). Cached to avoid a query per call.
+_user_id = None
+
 
 def _get_sf() -> Salesforce:
     """Get or create the Salesforce connection."""
@@ -23,6 +26,17 @@ def _get_sf() -> Salesforce:
         )
         logger.info("Connected to Salesforce (domain: %s)", SF_DOMAIN)
     return _sf
+
+
+def _get_user_id() -> str:
+    """Get (and cache) the Id of the API user (SF_USERNAME)."""
+    global _user_id
+    if _user_id is None:
+        sf = _get_sf()
+        record = sf.query(f"SELECT Id FROM User WHERE Username = '{SF_USERNAME}'")["records"][0]
+        _user_id = record["Id"]
+        logger.info("Resolved API user Id: %s", _user_id)
+    return _user_id
 
 
 def _sanitize_phone(phone: str) -> str:
@@ -262,6 +276,45 @@ def create_action_task(
     return task_id
 
 
+def complete_due_callback_tasks(who_id: str) -> int:
+    """
+    Mark the API user's own open 'Call back' follow-up tasks on a person
+    (Contact or Lead) that are due today or earlier as Completed. Calling the
+    person satisfies any overdue call-back reminder.
+
+    Only touches tasks owned by the API user (SF_USERNAME) — this is a shared
+    production org, so colleagues' tasks are never changed.
+
+    Never raises: any failure is logged as a warning and 0 is returned, so
+    cleanup can never break call logging.
+
+    Returns the number of tasks completed.
+    """
+    if not who_id:
+        return 0
+
+    try:
+        sf = _get_sf()
+        owner_id = _get_user_id()
+        result = sf.query(
+            "SELECT Id FROM Task "
+            f"WHERE WhoId = '{who_id}' "
+            "AND Subject = 'Call back' "
+            "AND Status = 'Open' AND IsClosed = false "
+            "AND ActivityDate <= TODAY "
+            f"AND OwnerId = '{owner_id}'"
+        )
+        completed = 0
+        for record in result["records"]:
+            sf.Task.update(record["Id"], {"Status": "Completed"})
+            logger.info("Completed due 'Call back' Task %s on %s", record["Id"], who_id)
+            completed += 1
+        return completed
+    except Exception as e:
+        logger.warning("Failed to complete due 'Call back' tasks for %s (non-fatal): %s", who_id, e)
+        return 0
+
+
 def create_nno_log(contact: dict) -> tuple[str, str]:
     """
     Create a completed NNO call task and a follow-up 'Call back' task for the next day.
@@ -292,6 +345,10 @@ def create_nno_log(contact: dict) -> tuple[str, str]:
     result = sf.Task.create(nno_data)
     nno_task_id = result["id"]
     logger.info("Created NNO Task %s for %s", nno_task_id, contact.get("Name"))
+
+    # This call satisfies any overdue 'Call back' reminder on the person.
+    if contact_id:
+        complete_due_callback_tasks(contact_id)
 
     # Follow-up task for next day
     follow_up_data = {

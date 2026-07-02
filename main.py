@@ -21,6 +21,7 @@ from services.salesforce import (
     create_transcript_note,
     create_action_task,
     create_nno_log,
+    complete_due_callback_tasks,
 )
 
 # Ensure log directory exists before opening FileHandler (D-12)
@@ -350,6 +351,11 @@ def process_pipeline(
                 _fail_job(job_id)
                 return
             resolved_type = contact.get("attributes", {}).get("type", "Contact")
+
+        # This call satisfies any overdue 'Call back' reminder on the person.
+        # Runs early so it happens even if transcription/summary later fails.
+        if contact.get("Id"):
+            complete_due_callback_tasks(contact["Id"])
 
         _update_job(job_id, contact_name=contact["Name"], step="transcribing")
 
