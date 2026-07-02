@@ -13,6 +13,13 @@ _sf = None
 # Lazy-initialized Id of the API user (SF_USERNAME). Cached to avoid a query per call.
 _user_id = None
 
+# Subjects of open follow-up tasks that a call to the person satisfies. Matched
+# exactly on the whole subject (case-insensitive, whitespace-trimmed) — never as
+# a substring, so real tasks like "send follow up email" are left untouched.
+# Extend this list to cover more reminder subjects.
+FOLLOWUP_SUBJECTS = ("Call back", "Follow up", "Check in")
+_FOLLOWUP_SUBJECTS_NORM = frozenset(s.strip().casefold() for s in FOLLOWUP_SUBJECTS)
+
 
 def _get_sf() -> Salesforce:
     """Get or create the Salesforce connection."""
@@ -276,11 +283,18 @@ def create_action_task(
     return task_id
 
 
-def complete_due_callback_tasks(who_id: str) -> int:
+def complete_due_followup_tasks(who_id: str) -> int:
     """
-    Mark the API user's own open 'Call back' follow-up tasks on a person
-    (Contact or Lead) that are due today or earlier as Completed. Calling the
-    person satisfies any overdue call-back reminder.
+    Mark the API user's own open follow-up tasks on a person (Contact or Lead)
+    that are due today or earlier as Completed. Calling the person satisfies any
+    overdue follow-up reminder whose subject is in FOLLOWUP_SUBJECTS
+    ('Call back', 'Follow up', 'Check in').
+
+    The subject must match a whitelist entry exactly (case-insensitive,
+    whitespace-trimmed) — never as a substring — so tasks like "send follow up
+    email" or "check in mbt servicecloud" are never touched. The SOQL IN filter
+    narrows candidates efficiently; a Python-side normalized check then guards
+    against SOQL's looser matching before anything is completed.
 
     Only touches tasks owned by the API user (SF_USERNAME) — this is a shared
     production org, so colleagues' tasks are never changed.
@@ -296,22 +310,26 @@ def complete_due_callback_tasks(who_id: str) -> int:
     try:
         sf = _get_sf()
         owner_id = _get_user_id()
+        subjects_in = ", ".join(f"'{s}'" for s in FOLLOWUP_SUBJECTS)
         result = sf.query(
-            "SELECT Id FROM Task "
+            "SELECT Id, Subject FROM Task "
             f"WHERE WhoId = '{who_id}' "
-            "AND Subject = 'Call back' "
+            f"AND Subject IN ({subjects_in}) "
             "AND Status = 'Open' AND IsClosed = false "
             "AND ActivityDate <= TODAY "
             f"AND OwnerId = '{owner_id}'"
         )
         completed = 0
         for record in result["records"]:
+            # Guard: exact whitelist match on the trimmed, case-folded subject.
+            if (record.get("Subject") or "").strip().casefold() not in _FOLLOWUP_SUBJECTS_NORM:
+                continue
             sf.Task.update(record["Id"], {"Status": "Completed"})
-            logger.info("Completed due 'Call back' Task %s on %s", record["Id"], who_id)
+            logger.info("Completed due follow-up Task %s ('%s') on %s", record["Id"], record.get("Subject"), who_id)
             completed += 1
         return completed
     except Exception as e:
-        logger.warning("Failed to complete due 'Call back' tasks for %s (non-fatal): %s", who_id, e)
+        logger.warning("Failed to complete due follow-up tasks for %s (non-fatal): %s", who_id, e)
         return 0
 
 
@@ -346,9 +364,9 @@ def create_nno_log(contact: dict) -> tuple[str, str]:
     nno_task_id = result["id"]
     logger.info("Created NNO Task %s for %s", nno_task_id, contact.get("Name"))
 
-    # This call satisfies any overdue 'Call back' reminder on the person.
+    # This call satisfies any overdue follow-up reminder on the person.
     if contact_id:
-        complete_due_callback_tasks(contact_id)
+        complete_due_followup_tasks(contact_id)
 
     # Follow-up task for next day
     follow_up_data = {
