@@ -1,6 +1,6 @@
 {
-  "version": "2.0.4",
-  "url": "https://github.com/23492/callbridge/releases/download/v2.0.4/CallBridge.app.zip",
-  "signature": "K9HntLoaPu1+aRZxo3DTLrMorkMHTZgJuR83UrfocEwvQcxImNOr4CXWgkJdAdrIu1XDPhxq7Ipf76t19BuxCQ==",
-  "notes": ""
+  "version": "2.0.5",
+  "url": "https://github.com/23492/callbridge/releases/download/v2.0.5/CallBridge.app.zip",
+  "signature": "ijwSgmFo3l355xzFyJB+JGGF4B4SiTYcfBa/Q/E6g8NYqEXRF6yETeNhuXMUhTrxu6VLlpeu18ACETi+BLmVBg==",
+  "notes": "Openstaande 'Call back' taken (vervaldatum vandaag of eerder) op het gebelde contact worden automatisch afgerond bij het loggen van een call of NNO."
 }
