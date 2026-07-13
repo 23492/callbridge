@@ -1,6 +1,6 @@
 {
-  "version": "2.0.6",
-  "url": "https://github.com/23492/callbridge/releases/download/v2.0.6/CallBridge.app.zip",
-  "signature": "LT4swnWyCdyqjvOokE9AfTAVy4mw5TqrHmQfzfkFv8XW+ABxKeOcT4u7Lghv+rZRMwq5vLhp9fu5YHpJaCZHCg==",
-  "notes": "Openstaande 'Call back', 'Follow up' en 'Check in' taken (vervaldatum vandaag of eerder) op het gebelde contact worden automatisch afgerond bij het loggen van een call of NNO."
+  "version": "2.0.7",
+  "url": "https://github.com/23492/callbridge/releases/download/v2.0.7/CallBridge.app.zip",
+  "signature": "VkhrC4CNzDDxGB4kDEganIpEn56K5CazeIM5+vMbhoFHm4H4CdAOrL3tAo+D+22cvT6V8hzxijeXG2LV+P9dCg==",
+  "notes": "Fix: a call logged against an account (when no contact matches the phone number) now saves to Salesforce instead of failing silently. Contact/lead logging is unchanged."
 }
