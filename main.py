@@ -16,6 +16,7 @@ from services.transcription import transcribe_audio
 from services.summarizer import generate_summary, extract_action_items
 from services.salesforce import (
     find_contact_by_phone,
+    resolve_provided_record,
     search_contacts,
     create_call_log,
     create_transcript_note,
@@ -219,17 +220,7 @@ async def log_nno(
     Log an NNO (Niet opgenomen). Creates a completed NNO task and a
     follow-up 'Call back' task for the next day.
     """
-    from services.salesforce import _get_sf
-
-    sf = _get_sf()
-    record = sf.query(
-        f"SELECT Id, Name{', AccountId' if salesforce_type == 'Contact' else ''} FROM {salesforce_type} WHERE Id = '{salesforce_id}'"
-    )["records"][0]
-    contact = {
-        "Id": record["Id"],
-        "Name": record["Name"],
-        "AccountId": record.get("AccountId"),
-    }
+    contact = resolve_provided_record(salesforce_id, salesforce_type)
 
     logger.info("Logging NNO for %s (%s/%s)", contact["Name"], salesforce_type, salesforce_id)
     nno_id, follow_up_id = create_nno_log(contact)
@@ -330,17 +321,7 @@ def process_pipeline(
         # 1. Find contact in Salesforce (or use provided ID)
         resolved_type = salesforce_type or "Contact"
         if salesforce_id and salesforce_type:
-            from simple_salesforce import Salesforce
-            from services.salesforce import _get_sf
-            sf = _get_sf()
-            record = sf.query(
-                f"SELECT Id, Name{', AccountId' if salesforce_type == 'Contact' else ''} FROM {salesforce_type} WHERE Id = '{salesforce_id}'"
-            )["records"][0]
-            contact = {
-                "Id": record["Id"],
-                "Name": record["Name"],
-                "AccountId": record.get("AccountId"),
-            }
+            contact = resolve_provided_record(salesforce_id, salesforce_type)
             resolved_type = salesforce_type
             logger.info("Using provided Salesforce record: %s (%s)", contact["Name"], salesforce_type)
         else:

@@ -158,6 +158,31 @@ def search_contacts(query: str) -> list[dict]:
     return normalized
 
 
+def resolve_provided_record(salesforce_id: str, salesforce_type: str) -> dict:
+    """
+    Build the internal contact dict from a Salesforce record the user picked in
+    the CallBridge UI (Contact, Account, or Lead).
+
+    A Task's WhoId only accepts a Contact or Lead; an Account belongs in WhatId.
+    So for an Account we leave "Id" (-> WhoId) empty and put the Account Id in
+    "AccountId" (-> WhatId), mirroring find_contact_by_phone's Account branch.
+    Putting an Account Id in "Id" is what makes Salesforce reject the Task with
+    FIELD_INTEGRITY_EXCEPTION on WhoId.
+    """
+    sf = _get_sf()
+    is_contact = salesforce_type == "Contact"
+    record = sf.query(
+        f"SELECT Id, Name{', AccountId' if is_contact else ''} "
+        f"FROM {salesforce_type} WHERE Id = '{salesforce_id}'"
+    )["records"][0]
+
+    if salesforce_type == "Account":
+        # Account -> WhatId only; there is no person for WhoId.
+        return {"Id": None, "Name": record["Name"], "AccountId": record["Id"]}
+    # Contact carries its own AccountId; Lead has none (WhoId-only).
+    return {"Id": record["Id"], "Name": record["Name"], "AccountId": record.get("AccountId")}
+
+
 def create_call_log(
     contact: dict,
     summary: str,
@@ -266,9 +291,13 @@ def create_action_task(
         "Subject": description[:255],
         "Status": "Not Started",
         "Priority": "Normal",
-        "WhoId": contact["Id"],
         "Description": description,
     }
+
+    # WhoId only accepts a Contact/Lead; skip it for Account-only associations.
+    contact_id = contact.get("Id")
+    if contact_id:
+        task_data["WhoId"] = contact_id
 
     if due_date:
         task_data["ActivityDate"] = due_date
