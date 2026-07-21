@@ -17,9 +17,18 @@ The app **bundles and supervises its own Python backend** (nothing separate to i
 - To build from source: **Xcode Command Line Tools** (`xcode-select --install`) and **Python 3.10+**
 - Credentials: a Salesforce username + password + security token, an **AssemblyAI** API key, and a **Google Gemini** API key
 
-## Install (build from source)
+## Install (DMG — recommended)
 
-> No signed release is published yet, so you build the app locally. (A signed, notarized `.dmg` is planned — see Roadmap.)
+When a signed release is published, installing takes under a minute and no terminal:
+
+1. Download **`CallBridge-<version>.dmg`** from the [latest release](https://github.com/23492/callbridge/releases/latest).
+2. Open the `.dmg` and **drag `CallBridge` onto the `Applications` shortcut**.
+3. Open **CallBridge** from Applications. Because the build is signed with a Developer ID and notarized by Apple, it launches without a Gatekeeper warning.
+4. Continue with [First launch](#first-launch) below (enter credentials, start Audio Hijack).
+
+> Producing that signed/notarized `.dmg` is a maintainer step — see [`docs/SIGNING-AND-DISTRIBUTION.md`](docs/SIGNING-AND-DISTRIBUTION.md). Until a signed release exists, build from source below.
+
+## Install (build from source)
 
 ```bash
 git clone https://github.com/23492/callbridge.git
@@ -64,10 +73,10 @@ launchctl load ~/Library/LaunchAgents/com.welisa.callbridge.plist
 
 ## Updating
 
-Pull the latest and re-run the build/install steps above. (An Ed25519-signed auto-updater is built in; it activates once releases are published — see Roadmap.)
+Once signed releases are published, installed copies **auto-update** within the hour: CallBridge checks `callbridge-update.json`, downloads the new `CallBridge.app.zip`, verifies its Ed25519 signature, and replaces itself. To update manually, download the latest `.dmg` and drag the new app over the old one (or, from source, re-run the build/install steps above).
 
 ## Roadmap
 
-Done: SwiftPM build, self-contained PyInstaller backend embedded in the app, Keychain credential storage with a first-run/auth-failure Settings prompt.
+Done: SwiftPM build, self-contained PyInstaller backend embedded in the app, Keychain credential storage with a first-run/auth-failure Settings prompt, Audio Hijack `Voice Chat` session template shipped in releases, **Developer ID signing + notarization + a drag-to-Applications `.dmg` installer** (build automation in `build-release.sh` / `build-dmg.sh`; see [`docs/SIGNING-AND-DISTRIBUTION.md`](docs/SIGNING-AND-DISTRIBUTION.md)).
 
-Planned: Audio Hijack session template + setup automation · Developer ID signing + notarization + a `.dmg` installer · published auto-update releases.
+Planned: publish the first signed `.dmg` release once the Apple Developer ID is provisioned · enable auto-update releases on a public download host.

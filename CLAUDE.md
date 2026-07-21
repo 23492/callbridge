@@ -75,7 +75,13 @@ Key files:
 
 - `callbridge-update.json` — version manifest (committed to repo, fetched by running instances)
 - `sign-update.swift` — Ed25519 signing tool (reads `SIGNING_PRIVATE_KEY` from `.env`)
-- `build-release.sh` — automates build, sign, and manifest update
+- `build-release.sh` — automates build, Developer ID sign, notarize+staple, DMG, EdDSA sign, and manifest update
+- `build-dmg.sh` — packages `CallBridge.app` into a drag-to-Applications `.dmg`
+- `scripts/codesign-app.sh` — deep-signs nested backend binaries + app (Developer ID + hardened runtime; ad-hoc fallback)
+- `CallBridge/entitlements.plist` — hardened-runtime entitlements for the embedded Python backend
+- `docs/SIGNING-AND-DISTRIBUTION.md` — one-time Apple Developer ID / notarization setup and CI secrets
+
+Developer ID signing + notarization activate only when the signing env vars / CI secrets are set; otherwise the build falls back to ad-hoc signing and an unsigned DMG (dev-machine builds keep working).
 
 ## Config
 

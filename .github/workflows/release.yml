@@ -1,9 +1,21 @@
 name: Release
 
 # Push-button release: builds the app + embedded backend on a macOS runner,
-# ad-hoc code-signs it, EdDSA-signs the zip with the SIGNING_PRIVATE_KEY secret,
-# publishes a GitHub Release, and bumps callbridge-update.json so installed
-# copies auto-update within the hour.
+# code-signs it (Developer ID + hardened runtime when the signing secrets are
+# present, ad-hoc otherwise), notarizes + staples the app zip and the .dmg,
+# EdDSA-signs the zip with the SIGNING_PRIVATE_KEY secret, publishes a GitHub
+# Release (zip + dmg), and bumps callbridge-update.json so installed copies
+# auto-update within the hour.
+#
+# Signing / notarization secrets (all optional — omit them for an ad-hoc build):
+#   DEVELOPER_ID_APP        identity name, e.g.
+#                           "Developer ID Application: Welisa B.V. (TEAMID1234)"
+#   DEVELOPER_ID_CERT_P12   base64 of the exported Developer ID .p12
+#   DEVELOPER_ID_CERT_PW    password protecting that .p12
+#   AC_API_KEY_P8           base64 of the App Store Connect API key (.p8)
+#   AC_API_KEY_ID           App Store Connect API Key ID
+#   AC_API_ISSUER_ID        App Store Connect Issuer ID
+# See docs/SIGNING-AND-DISTRIBUTION.md for how to create these.
 on:
   workflow_dispatch:
     inputs:
@@ -17,15 +29,49 @@ permissions:
 jobs:
   release:
     runs-on: macos-latest
+    env:
+      DEVELOPER_ID_APP: ${{ secrets.DEVELOPER_ID_APP }}
+      AC_API_KEY_ID: ${{ secrets.AC_API_KEY_ID }}
+      AC_API_ISSUER_ID: ${{ secrets.AC_API_ISSUER_ID }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Restore EdDSA signing key
         run: echo "SIGNING_PRIVATE_KEY=${{ secrets.SIGNING_PRIVATE_KEY }}" > .env
 
-      - name: Build, code-sign, and sign the update
+      - name: Import Developer ID signing certificate
+        if: ${{ secrets.DEVELOPER_ID_CERT_P12 != '' }}
+        env:
+          CERT_P12: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
+          CERT_PW: ${{ secrets.DEVELOPER_ID_CERT_PW }}
         run: |
-          chmod +x build-release.sh
+          # Create a throwaway keychain, import the cert, and make it available
+          # to codesign for this job only.
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PW" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          # Prepend our keychain to the search list so codesign finds the identity.
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Stage App Store Connect API key for notarization
+        if: ${{ secrets.AC_API_KEY_P8 != '' }}
+        env:
+          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
+        run: |
+          echo "$AC_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/ac_api_key.p8"
+          echo "AC_API_KEY_PATH=$RUNNER_TEMP/ac_api_key.p8" >> "$GITHUB_ENV"
+
+      - name: Build, sign, notarize, and package
+        run: |
+          chmod +x build-release.sh build-dmg.sh scripts/codesign-app.sh
           ./build-release.sh "${{ inputs.version }}"
 
       - name: Commit version bump + update manifest
@@ -40,10 +86,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${{ inputs.version }}" CallBridge.app.zip "audio-hijack/Voice Chat.ah4session" \
+          gh release create "v${{ inputs.version }}" \
+            CallBridge.app.zip \
+            "CallBridge-${{ inputs.version }}.dmg" \
+            "audio-hijack/Voice Chat.ah4session" \
             --title "CallBridge v${{ inputs.version }}" \
-            --notes "Automated build. Install manually via gh release download; auto-update is disabled on this private repo. Includes the Audio Hijack Voice Chat session template (import it into Audio Hijack on each Mac)."
+            --notes "Automated build. Install: open the .dmg and drag CallBridge to Applications. Includes the Audio Hijack Voice Chat session template (import it into Audio Hijack on each Mac). The .app.zip is the auto-update payload."
 
-      - name: Remove signing key from runner
+      - name: Clean up secrets from runner
         if: always()
-        run: rm -f .env
+        run: |
+          rm -f .env "$RUNNER_TEMP/ac_api_key.p8"
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true

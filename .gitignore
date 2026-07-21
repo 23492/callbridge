@@ -7,6 +7,7 @@ CallBridge/CallBridge.app/
 .claude/
 .venv/
 *.app.zip
+*.dmg
 .signing-key
 .build/
 .planning/

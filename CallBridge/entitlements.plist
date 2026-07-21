@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Hardened-runtime entitlements for CallBridge.
+
+	  The app embeds a self-contained Python (FastAPI) backend built with
+	  PyInstaller at Contents/Resources/callbridge-server. To run that embedded
+	  interpreter and its bundled C-extension dylibs under the hardened runtime
+	  (required for notarization), the app needs to load libraries that are not
+	  part of the main executable's signature and to allocate executable memory
+	  for the interpreter. Without these, the notarized app crashes on launch of
+	  the backend child process.
+	-->
+
+	<!-- Allow loading the PyInstaller-bundled dylibs / .so extension modules
+	     that are not signed by (or sealed into) the main app binary. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+
+	<!-- CPython and some native deps allocate writable+executable memory. -->
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+
+	<!-- The embedded backend reads argv[0]/sys.executable and dlopens relative
+	     dylibs; keep the parent env for the child process. -->
+	<key>com.apple.security.cs.allow-dyld-environment-variables</key>
+	<true/>
+
+	<!-- Outbound network access (AssemblyAI, Gemini, Salesforce) and the
+	     localhost:8765 backend socket. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+</dict>
+</plist>
