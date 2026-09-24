@@ -10,3 +10,4 @@ CallBridge/CallBridge.app/
 .signing-key
 .build/
 .planning/
+build/

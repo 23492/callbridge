@@ -7,7 +7,7 @@ import Security
 
 // MARK: - Version & Update Config
 
-let appVersion = "2.0.7"
+let appVersion = "2.0.8"
 let updateManifestURL = "https://raw.githubusercontent.com/23492/callbridge/main/callbridge-update.json"
 let updatePublicKey = "ylneUBx4bMQxiX9rsDkKtya1InBHUzlbfsEOwpvFA2E="
 
@@ -283,9 +283,13 @@ class UpdateChecker {
     }
 
     func replaceAndRelaunch(extractedApp: String, appDest: String) {
+        // Wait until this process has really exited (it stops the backend first) —
+        // otherwise the relaunched copy sees a running instance and quits itself.
+        let pid = ProcessInfo.processInfo.processIdentifier
         let script = """
         #!/bin/bash
-        sleep 2
+        for i in $(seq 1 50); do kill -0 \(pid) 2>/dev/null || break; sleep 0.2; done
+        sleep 0.5
         rm -rf "\(appDest)"
         mv "\(extractedApp)" "\(appDest)"
         xattr -cr "\(appDest)"
@@ -928,7 +932,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     func applicationWillFinishLaunching(_ notification: Notification) {
         if let bundleID = Bundle.main.bundleIdentifier {
             otherInstance = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-                .first { $0 != NSRunningApplication.current }
+                .first { $0 != NSRunningApplication.current && !$0.isTerminated }
         }
         // Registered here (not in didFinishLaunching) so the tel: event that launched
         // the app is never missed — also when this turns out to be a duplicate.
@@ -990,18 +994,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         // Check for unprocessed recordings on launch
         checkForOrphanedRecordings()
 
-        // Auto-update DISABLED: this is a PRIVATE repo, so the manifest at
-        // raw.githubusercontent.com (and the release-asset download) require auth
-        // that a distributable app can't safely embed. The poll only ever produced
-        // "decode error" and was a latent risk of overwriting a locally-deployed
-        // build with an older release. Update manually via `gh release download`.
-        // Re-enable only with a PUBLIC manifest host + authenticated asset download.
-        // DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
-        //     self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
-        // }
-        // updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
-        //     self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
-        // }
+        // Update check (the repo is public, so the manifest is reachable). This only
+        // surfaces "⬆ Update naar vX" in the menu when a NEWER signed version exists;
+        // installing always takes an explicit click.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
+            self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
+        }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
+            self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
+        }
     }
 
     /// Minimal main menu with a standard Edit menu so Cut/Copy/Paste/Select-All
@@ -1270,11 +1271,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         recentItem.submenu = recentSubmenu
         menu.addItem(recentItem)
 
-        // Auto-update is disabled (private repo, see applicationDidFinishLaunching);
-        // a "check for updates" item that silently did nothing only confused users.
-        let versionItem = NSMenuItem(title: "Versie \(appVersion)", action: nil, keyEquivalent: "")
-        versionItem.isEnabled = false
-        menu.addItem(versionItem)
+        // Update section (the check only offers an update; installing is a click)
+        if let version = updateChecker.availableVersion {
+            let updateItem = NSMenuItem(title: "⬆ Update naar v\(version)", action: #selector(installUpdate), keyEquivalent: "")
+            updateItem.target = self
+            menu.addItem(updateItem)
+        } else {
+            let checkItem = NSMenuItem(title: "Zoek naar updates… (v\(appVersion))", action: #selector(checkForUpdatesManually), keyEquivalent: "u")
+            checkItem.target = self
+            menu.addItem(checkItem)
+        }
 
         let settingsMenuItem = NSMenuItem(title: "Instellingen…", action: #selector(showSettings), keyEquivalent: "")
         settingsMenuItem.target = self

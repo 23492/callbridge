@@ -1,6 +1,6 @@
 {
-  "version": "2.0.7",
-  "url": "https://github.com/23492/callbridge/releases/download/v2.0.7/CallBridge.app.zip",
-  "signature": "VkhrC4CNzDDxGB4kDEganIpEn56K5CazeIM5+vMbhoFHm4H4CdAOrL3tAo+D+22cvT6V8hzxijeXG2LV+P9dCg==",
-  "notes": "Fix: a call logged against an account (when no contact matches the phone number) now saves to Salesforce instead of failing silently. Contact/lead logging is unchanged."
+  "version": "2.0.8",
+  "url": "https://github.com/23492/callbridge/releases/download/v2.0.8/CallBridge.app.zip",
+  "signature": "zKdiZUfFK82qoLo0Ap/eLr7Iwe3wpUC7l3Sj0bIWMNiNb8XRKnhBy2Vd/YetQDvTYcY2mJ2aRdLImD6gMn2wBA==",
+  "notes": "Grote betrouwbaarheidsupdate: server loopt niet meer vast, geen dubbele opslaan-dialogen, ander nummer kiezen tijdens opname start de flow opnieuw, menu toont alleen je eigen taken."
 }
