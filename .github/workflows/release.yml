@@ -14,35 +14,62 @@ on:
 permissions:
   contents: write
 
+# Never run two releases at once (they would race on the version-bump commits).
+concurrency: release
+
 jobs:
   release:
+    if: github.ref == 'refs/heads/main'
     runs-on: macos-latest
+    env:
+      VERSION: ${{ inputs.version }}
     steps:
+      - name: Validate version
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version '$VERSION' (expected MAJOR.MINOR.PATCH, e.g. 2.0.1)"
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
       - name: Restore EdDSA signing key
-        run: echo "SIGNING_PRIVATE_KEY=${{ secrets.SIGNING_PRIVATE_KEY }}" > .env
+        env:
+          SIGNING_PRIVATE_KEY: ${{ secrets.SIGNING_PRIVATE_KEY }}
+        run: printf 'SIGNING_PRIVATE_KEY=%s\n' "$SIGNING_PRIVATE_KEY" > .env
 
       - name: Build, code-sign, and sign the update
         run: |
           chmod +x build-release.sh
-          ./build-release.sh "${{ inputs.version }}"
+          ./build-release.sh "$VERSION"
 
-      - name: Commit version bump + update manifest
+      # Ordering matters: installed copies follow callbridge-update.json on main.
+      # We push the version bump first, create the release pointing at that
+      # commit, and only then push the manifest. If the release step fails,
+      # the manifest on main still points at the previous (existing) release.
+      - name: Commit + push version bump
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CallBridge/CallBridge/main.swift CallBridge/CallBridge/Info.plist callbridge-update.json
-          git commit -m "Release v${{ inputs.version }}"
+          git add CallBridge/CallBridge/main.swift CallBridge/CallBridge/Info.plist
+          git commit -m "Bump version to v$VERSION"
           git push
+          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${{ inputs.version }}" CallBridge.app.zip "audio-hijack/Voice Chat.ah4session" \
-            --title "CallBridge v${{ inputs.version }}" \
+          gh release create "v$VERSION" CallBridge.app.zip "audio-hijack/Voice Chat.ah4session" \
+            --target "$RELEASE_SHA" \
+            --title "CallBridge v$VERSION" \
             --notes "Automated build. Install manually via gh release download; auto-update is disabled on this private repo. Includes the Audio Hijack Voice Chat session template (import it into Audio Hijack on each Mac)."
+
+      - name: Commit + push update manifest
+        run: |
+          git add callbridge-update.json
+          git commit -m "Release v$VERSION"
+          git push
 
       - name: Remove signing key from runner
         if: always()

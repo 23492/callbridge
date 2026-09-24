@@ -1,6 +1,9 @@
 import base64
+import html
 import re
 import logging
+import threading
+import time
 from datetime import datetime, timedelta
 from simple_salesforce import Salesforce
 from config import SF_USERNAME, SF_PASSWORD, SF_SECURITY_TOKEN, SF_DOMAIN
@@ -9,6 +12,18 @@ logger = logging.getLogger(__name__)
 
 # Lazy-initialized Salesforce connection
 _sf = None
+_sf_last_used = 0.0
+_sf_lock = threading.Lock()
+
+# Re-login after this much idle time. simple_salesforce never refreshes an expired
+# session itself, so a backend left running overnight would otherwise fail every
+# call with INVALID_SESSION_ID until restarted. Kept well under the org's timeout.
+_SF_IDLE_RELOGIN_SECONDS = 30 * 60
+
+# Object types the UI may pass in, and the shape of a Salesforce Id. Both are
+# interpolated into SOQL, so they must be validated first.
+ALLOWED_RECORD_TYPES = ("Contact", "Account", "Lead")
+_SF_ID_RE = re.compile(r"^[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?$")
 
 # Lazy-initialized Id of the API user (SF_USERNAME). Cached to avoid a query per call.
 _user_id = None
@@ -22,17 +37,32 @@ _FOLLOWUP_SUBJECTS_NORM = frozenset(s.strip().casefold() for s in FOLLOWUP_SUBJE
 
 
 def _get_sf() -> Salesforce:
-    """Get or create the Salesforce connection."""
-    global _sf
-    if _sf is None:
-        _sf = Salesforce(
-            username=SF_USERNAME,
-            password=SF_PASSWORD,
-            security_token=SF_SECURITY_TOKEN,
-            domain=SF_DOMAIN,
-        )
-        logger.info("Connected to Salesforce (domain: %s)", SF_DOMAIN)
-    return _sf
+    """Get or create the Salesforce connection (re-logs in after long idle)."""
+    global _sf, _sf_last_used
+    with _sf_lock:
+        now = time.monotonic()
+        if _sf is not None and now - _sf_last_used > _SF_IDLE_RELOGIN_SECONDS:
+            logger.info("Salesforce connection idle for >%ds — re-logging in", _SF_IDLE_RELOGIN_SECONDS)
+            _sf = None
+        if _sf is None:
+            _sf = Salesforce(
+                username=SF_USERNAME,
+                password=SF_PASSWORD,
+                security_token=SF_SECURITY_TOKEN,
+                domain=SF_DOMAIN,
+            )
+            logger.info("Connected to Salesforce (domain: %s)", SF_DOMAIN)
+        _sf_last_used = now
+        return _sf
+
+
+def _soql_str(value: str) -> str:
+    """Escape a value for use inside a single-quoted SOQL string literal."""
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def is_valid_sf_id(value: str | None) -> bool:
+    return bool(value) and bool(_SF_ID_RE.match(value))
 
 
 def _get_user_id() -> str:
@@ -40,7 +70,7 @@ def _get_user_id() -> str:
     global _user_id
     if _user_id is None:
         sf = _get_sf()
-        record = sf.query(f"SELECT Id FROM User WHERE Username = '{SF_USERNAME}'")["records"][0]
+        record = sf.query(f"SELECT Id FROM User WHERE Username = '{_soql_str(SF_USERNAME or '')}'")["records"][0]
         _user_id = record["Id"]
         logger.info("Resolved API user Id: %s", _user_id)
     return _user_id
@@ -99,6 +129,7 @@ def find_contact_by_phone(phone_number: str) -> dict | None:
                 "Id": record["Id"],
                 "Name": record["Name"],
                 "AccountId": None,
+                "Company": record.get("Company"),
                 "attributes": record["attributes"],
             }
 
@@ -119,8 +150,12 @@ def _normalize_record(record: dict) -> dict:
         base["account_name"] = (record.get("Account") or {}).get("Name")
         base["account_id"] = record.get("AccountId")
     elif obj_type == "Account":
+        # find_contact_by_phone's Account result keeps the Id in AccountId (Id=None,
+        # since WhoId can't take an Account) — fall back to it so the UI gets an id.
+        account_id = record.get("Id") or record.get("AccountId")
+        base["id"] = account_id
         base["account_name"] = record.get("Name")
-        base["account_id"] = record["Id"]
+        base["account_id"] = account_id
     elif obj_type == "Lead":
         base["account_name"] = record.get("Company")
         base["account_id"] = None
@@ -169,12 +204,20 @@ def resolve_provided_record(salesforce_id: str, salesforce_type: str) -> dict:
     Putting an Account Id in "Id" is what makes Salesforce reject the Task with
     FIELD_INTEGRITY_EXCEPTION on WhoId.
     """
+    if salesforce_type not in ALLOWED_RECORD_TYPES:
+        raise ValueError(f"Unsupported Salesforce type: {salesforce_type!r}")
+    if not is_valid_sf_id(salesforce_id):
+        raise ValueError(f"Invalid Salesforce Id: {salesforce_id!r}")
+
     sf = _get_sf()
     is_contact = salesforce_type == "Contact"
-    record = sf.query(
+    records = sf.query(
         f"SELECT Id, Name{', AccountId' if is_contact else ''} "
         f"FROM {salesforce_type} WHERE Id = '{salesforce_id}'"
-    )["records"][0]
+    )["records"]
+    if not records:
+        raise ValueError(f"{salesforce_type} {salesforce_id} not found")
+    record = records[0]
 
     if salesforce_type == "Account":
         # Account -> WhatId only; there is no person for WhoId.
@@ -241,7 +284,8 @@ def create_transcript_note(task_id: str, transcript: str) -> str:
     today = datetime.now().strftime("%d %B %Y")
 
     # ContentNote content must be base64-encoded HTML
-    html_content = f"<p>{transcript.replace(chr(10), '</p><p>')}</p>"
+    # Escape first: a transcript containing & or < made the note invalid HTML.
+    html_content = "<p>" + html.escape(transcript, quote=False).replace("\n", "</p><p>") + "</p>"
     encoded = base64.b64encode(html_content.encode("utf-8")).decode("utf-8")
 
     note = sf.ContentNote.create({
@@ -312,6 +356,35 @@ def create_action_task(
     return task_id
 
 
+def fetch_my_open_future_tasks(record_id: str | None) -> list[dict]:
+    """
+    Open tasks due today or later that are related to the record (as WhoId for a
+    Contact/Lead, or WhatId for an Account) AND owned by the API user. The org is
+    shared, so colleagues' tasks are never shown in the menu.
+    """
+    if not is_valid_sf_id(record_id):
+        return []
+    # 001 = Account (only valid as WhatId); Contact (003) / Lead (00Q) are WhoIds.
+    relation = "WhatId" if record_id.startswith("001") else "WhoId"
+    try:
+        sf = _get_sf()
+        owner_id = _get_user_id()
+        results = sf.query(
+            "SELECT Id, Subject, ActivityDate FROM Task "
+            f"WHERE {relation} = '{record_id}' "
+            f"AND OwnerId = '{owner_id}' "
+            "AND IsClosed = false AND ActivityDate >= TODAY "
+            "ORDER BY ActivityDate ASC LIMIT 10"
+        )
+        return [
+            {"task_id": r["Id"], "subject": r.get("Subject") or "", "activity_date": r.get("ActivityDate") or ""}
+            for r in results["records"]
+        ]
+    except Exception as e:
+        logger.warning("Failed to fetch future tasks for %s: %s", record_id, e)
+        return []
+
+
 def complete_due_followup_tasks(who_id: str) -> int:
     """
     Mark the API user's own open follow-up tasks on a person (Contact or Lead)
@@ -344,7 +417,7 @@ def complete_due_followup_tasks(who_id: str) -> int:
             "SELECT Id, Subject FROM Task "
             f"WHERE WhoId = '{who_id}' "
             f"AND Subject IN ({subjects_in}) "
-            "AND Status = 'Open' AND IsClosed = false "
+            "AND IsClosed = false "
             "AND ActivityDate <= TODAY "
             f"AND OwnerId = '{owner_id}'"
         )

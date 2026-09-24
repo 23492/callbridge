@@ -1,14 +1,16 @@
 import logging
 import os
+import subprocess
 import sys
 import tempfile
 import threading
 import uuid
 from collections import deque
-from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Form, Query
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Form, Query, HTTPException, Request
+from fastapi.responses import JSONResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -23,6 +25,10 @@ from services.salesforce import (
     create_action_task,
     create_nno_log,
     complete_due_followup_tasks,
+    fetch_my_open_future_tasks,
+    ALLOWED_RECORD_TYPES,
+    is_valid_sf_id,
+    _get_user_id,
 )
 
 # Ensure log directory exists before opening FileHandler (D-12)
@@ -47,6 +53,26 @@ else:
     _base_dir = os.path.dirname(os.path.abspath(__file__))
 
 app = FastAPI(title="Call Logger", version="2.0.0")
+
+# Browsers let any web page send "simple" cross-origin form POSTs to localhost
+# (CORS only blocks reading the response), so an arbitrary site could otherwise
+# create Tasks in the production org via /log-nno or /process. CallBridge's
+# URLSession sends no Origin header; the dashboard's origin is this server.
+_ALLOWED_ORIGINS = {"http://localhost:8765", "http://127.0.0.1:8765"}
+
+
+# DNS rebinding: a hostile domain resolving to 127.0.0.1 would pass the Origin
+# check's absence and could read /contact-search. Only accept our own host names.
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
+
+
+@app.middleware("http")
+async def reject_foreign_origins(request: Request, call_next):
+    origin = request.headers.get("origin")
+    if origin and origin not in _ALLOWED_ORIGINS:
+        logger.warning("Rejected %s %s from foreign origin %s", request.method, request.url.path, origin)
+        return JSONResponse(status_code=403, content={"detail": "Forbidden origin"})
+    return await call_next(request)
 
 # Job tracking for /status endpoint
 _jobs_lock = threading.Lock()
@@ -78,26 +104,9 @@ def _complete_job(job_id: str, contact_name: str, contact_id: str, contact_type:
         })
 
 
-def _fetch_future_tasks(what_id: str) -> list[dict]:
-    """Fetch open future tasks for a given WhatId."""
-    if not what_id:
-        return []
-    try:
-        from services.salesforce import _get_sf
-        sf = _get_sf()
-        today = datetime.now().strftime("%Y-%m-%d")
-        results = sf.query(
-            f"SELECT Id, Subject, ActivityDate FROM Task "
-            f"WHERE WhatId = '{what_id}' AND ActivityDate >= {today} AND Status != 'Completed' "
-            f"ORDER BY ActivityDate ASC"
-        )
-        return [
-            {"task_id": r["Id"], "subject": r.get("Subject", ""), "activity_date": r.get("ActivityDate", "")}
-            for r in results["records"]
-        ]
-    except Exception as e:
-        logger.warning("Failed to fetch future tasks for %s: %s", what_id, e)
-        return []
+def _fetch_future_tasks(record_id: str | None) -> list[dict]:
+    """Open future tasks on the record (Who or What) owned by the API user."""
+    return fetch_my_open_future_tasks(record_id)
 
 
 def _fail_job(job_id: str):
@@ -110,30 +119,42 @@ app.mount("/dashboard", StaticFiles(directory=os.path.join(_base_dir, "dashboard
 
 
 @app.on_event("startup")
+def start_seed_recent_calls():
+    # In the background: a Salesforce login + queries here used to delay binding
+    # :8765 by seconds, which the app's health checks read as a dead backend.
+    threading.Thread(target=seed_recent_calls, name="seed-recent-calls", daemon=True).start()
+
+
 def seed_recent_calls():
     """Load last 3 Auto Logger call tasks from Salesforce on startup."""
     try:
         from services.salesforce import _get_sf
         sf = _get_sf()
+        # Shared org: only the API user's own calls, never colleagues'.
         results = sf.query(
-            "SELECT Id, WhatId, What.Name, What.Type "
+            "SELECT Id, WhoId, Who.Name, Who.Type, WhatId, What.Name, What.Type "
             "FROM Task WHERE (Log_Type__c = 'Sales Call' OR Subject = 'NNO') "
+            f"AND OwnerId = '{_get_user_id()}' "
             "ORDER BY CreatedDate DESC LIMIT 3"
         )
         for record in results["records"]:
-            what = record.get("What") or {}
-            contact_name = what.get("Name", "Onbekend")
-            contact_id = record.get("WhatId") or ""
-            contact_type = what.get("Type", "Account")
+            # Prefer the person (Contact/Lead) the call was logged on; fall back to the Account.
+            if record.get("WhoId"):
+                rel, contact_id = record.get("Who") or {}, record["WhoId"]
+            else:
+                rel, contact_id = record.get("What") or {}, record.get("WhatId") or ""
+            contact_name = rel.get("Name") or "Onbekend"
+            contact_type = rel.get("Type") or "Account"
             task_id = record["Id"]
             future_tasks = _fetch_future_tasks(contact_id)
-            _completed_jobs.append({
-                "contact_name": contact_name,
-                "contact_id": contact_id,
-                "contact_type": contact_type,
-                "task_id": task_id,
-                "future_tasks": future_tasks,
-            })
+            with _jobs_lock:
+                _completed_jobs.append({
+                    "contact_name": contact_name,
+                    "contact_id": contact_id,
+                    "contact_type": contact_type,
+                    "task_id": task_id,
+                    "future_tasks": future_tasks,
+                })
         logger.info("Seeded %d recent calls from Salesforce", len(results["records"]))
     except Exception as e:
         logger.warning("Failed to seed recent calls: %s", e)
@@ -141,7 +162,8 @@ def seed_recent_calls():
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    # pid/ppid let the app tell its own backend apart from an orphan holding :8765.
+    return {"status": "ok", "pid": os.getpid(), "ppid": os.getppid()}
 
 
 class CredentialValidationRequest(BaseModel):
@@ -212,15 +234,21 @@ def contact_search(
 
 
 @app.post("/log-nno")
-async def log_nno(
+def log_nno(
     salesforce_id: str = Form(...),
     salesforce_type: str = Form(...),
 ):
     """
     Log an NNO (Niet opgenomen). Creates a completed NNO task and a
     follow-up 'Call back' task for the next day.
+
+    Sync (not async) on purpose: the Salesforce calls block, and an async handler
+    would stall the event loop — and with it /health and /status — for seconds.
     """
-    contact = resolve_provided_record(salesforce_id, salesforce_type)
+    try:
+        contact = resolve_provided_record(salesforce_id, salesforce_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     logger.info("Logging NNO for %s (%s/%s)", contact["Name"], salesforce_type, salesforce_id)
     nno_id, follow_up_id = create_nno_log(contact)
@@ -257,6 +285,9 @@ async def process_recording(
     Process an audio recording. Called by CallBridge after user confirms save.
     Phone number is always provided by CallBridge.
     """
+    if salesforce_id or salesforce_type:
+        if salesforce_type not in ALLOWED_RECORD_TYPES or not is_valid_sf_id(salesforce_id):
+            raise HTTPException(status_code=400, detail="Invalid salesforce_id/salesforce_type")
     suffix = os.path.splitext(audio.filename or ".wav")[1]
     fd, temp_path = tempfile.mkstemp(suffix=suffix, prefix="calllog_")
     with os.fdopen(fd, "wb") as f:
@@ -333,11 +364,6 @@ def process_pipeline(
                 return
             resolved_type = contact.get("attributes", {}).get("type", "Contact")
 
-        # This call satisfies any overdue follow-up reminder on the person.
-        # Runs early so it happens even if transcription/summary later fails.
-        if contact.get("Id"):
-            complete_due_followup_tasks(contact["Id"])
-
         _update_job(job_id, contact_name=contact["Name"], step="transcribing")
 
         # 2. Transcribe audio via AssemblyAI
@@ -353,9 +379,16 @@ def process_pipeline(
 
         _update_job(job_id, step="summarizing")
 
-        # 3. Generate summary via Gemini
+        # 3. Generate summary via Gemini. A failure here must not throw away a paid-for
+        # transcript: log the call anyway, with the transcript attached as usual.
         logger.info("Generating summary...")
-        summary = generate_summary(transcript)
+        summary_ok = True
+        try:
+            summary = generate_summary(transcript)
+        except Exception as e:
+            logger.error("Summary generation failed (logging call without summary): %s", e, exc_info=True)
+            summary = f"Samenvatting mislukt ({e}). Zie het transcript in de bijlage."
+            summary_ok = False
 
         # 4. Get call duration from AssemblyAI response
         duration = result["audio_duration"]
@@ -366,7 +399,7 @@ def process_pipeline(
         follow_up_date = None
         actions = []
         try:
-            actions = extract_action_items(summary)
+            actions = extract_action_items(summary) if summary_ok else []
             for action in actions:
                 if action.get("is_follow_up_call") and action.get("due_date"):
                     follow_up_date = action["due_date"]
@@ -379,6 +412,12 @@ def process_pipeline(
         # 6. Create Call Log in Salesforce (with follow-up date if found)
         task_id = create_call_log(contact, summary, duration, direction, follow_up_date)
 
+        # The logged call satisfies any overdue follow-up reminder on the person.
+        # Only now — after the call Task exists — so a failed transcription/summary
+        # never silently closes a reminder without leaving a call record.
+        if contact.get("Id"):
+            complete_due_followup_tasks(contact["Id"])
+
         # 7. Create transcript note and link to Task
         create_transcript_note(task_id, transcript)
 
@@ -390,37 +429,47 @@ def process_pipeline(
                 except Exception as e:
                     logger.warning("Failed to create action task: %s", e)
 
-        # 9. Clean up temp file
-        os.remove(audio_path)
-
         logger.info("Pipeline complete: %s (%s) -> Task %s", contact["Name"], phone_number, task_id)
-        _complete_job(job_id, contact["Name"], contact["Id"], resolved_type, task_id)
+        # Account-only associations have no person Id; the menu links to the Account.
+        record_id = contact.get("Id") or contact.get("AccountId") or ""
+        _complete_job(job_id, contact["Name"], record_id, resolved_type, task_id)
         _notify_success(contact["Name"])
 
     except Exception as e:
         logger.error("Pipeline error: %s", e, exc_info=True)
         _fail_job(job_id)
         _notify_error(str(e))
+    finally:
+        # 9. Clean up temp file — also on failure (the app keeps the original).
+        try:
+            os.remove(audio_path)
+        except OSError:
+            pass
+
+
+def _osa_str(value: str) -> str:
+    """Quote a value as an AppleScript string literal."""
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _notify(message: str, sound: str | None = None):
+    # No shell: Salesforce names and exception text routinely contain quotes,
+    # which broke (or could inject into) the old os.system() command line.
+    script = f"display notification {_osa_str(message[:200])} with title \"Call Logger\""
+    if sound:
+        script += f" sound name {_osa_str(sound)}"
+    try:
+        subprocess.run(["/usr/bin/osascript", "-e", script], check=False, timeout=10)
+    except Exception:
+        pass
 
 
 def _notify_success(contact_name: str):
-    try:
-        os.system(
-            f'osascript -e \'display notification "Call log aangemaakt voor {contact_name}" '
-            f'with title "Call Logger"\''
-        )
-    except Exception:
-        pass
+    _notify(f"Call log aangemaakt voor {contact_name}")
 
 
 def _notify_error(message: str):
-    try:
-        os.system(
-            f'osascript -e \'display notification "Fout: {message}" '
-            f'with title "Call Logger" sound name "Basso"\''
-        )
-    except Exception:
-        pass
+    _notify(f"Fout: {message}", sound="Basso")
 
 
 if __name__ == "__main__":

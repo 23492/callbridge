@@ -28,6 +28,16 @@ func debugLog(_ message: String) {
     try? handle.close()
 }
 
+/// Escape a value for an XML text node (SOAP login body). Passwords with & or <
+/// otherwise produced malformed XML and every login check failed.
+func xmlEscape(_ s: String) -> String {
+    s.replacingOccurrences(of: "&", with: "&amp;")
+     .replacingOccurrences(of: "<", with: "&lt;")
+     .replacingOccurrences(of: ">", with: "&gt;")
+     .replacingOccurrences(of: "\"", with: "&quot;")
+     .replacingOccurrences(of: "'", with: "&apos;")
+}
+
 // MARK: - Data Models
 
 struct ContactInfo: Codable, Identifiable, Hashable {
@@ -105,13 +115,16 @@ struct FutureTask: Codable {
 
 struct CompletedJob: Codable {
     let contact_name: String
-    let contact_id: String
+    // Optional: a null here (Account-only call logs) used to fail decoding of the
+    // whole /status payload, so the menu claimed the server was unreachable.
+    let contact_id: String?
     let contact_type: String
     let task_id: String
     let future_tasks: [FutureTask]?
 
     var contactURL: URL? {
-        URL(string: "https://welisa.lightning.force.com/lightning/r/\(contact_type)/\(contact_id)/view")
+        guard let id = contact_id, !id.isEmpty else { return nil }
+        return URL(string: "https://welisa.lightning.force.com/lightning/r/\(contact_type)/\(id)/view")
     }
     var taskURL: URL? {
         URL(string: "https://welisa.lightning.force.com/lightning/r/Task/\(task_id)/view")
@@ -332,6 +345,9 @@ struct KeychainHelper {
         ]
         let status = SecItemAdd(query as CFDictionary, nil)
         debugLog("KeychainHelper: save key=\(key) status=\(status)")
+        // read() returns nil for *any* failure (e.g. a denied access prompt), not
+        // just "not found" — the item may exist after all, so update it instead.
+        if status == errSecDuplicateItem { update(key: key, value: value) }
     }
 
     static func read(key: String) -> String? {
@@ -384,13 +400,26 @@ struct KeychainHelper {
 // MARK: - Backend Supervisor
 
 class BackendSupervisor {
+    // All mutable state below is owned by `queue`. Entry points hop onto it, so the
+    // termination handler, restart timers, health polls and menu-triggered self-heal
+    // can no longer race each other (which used to double-spawn backends and make
+    // them kill each other's port in a loop).
+    private let queue = DispatchQueue(label: "com.welisa.CallBridge.supervisor")
     private var process: Process?
+    private var generation = 0            // bumped per spawn; stale callbacks compare against it
     private var restartCount: Int = 0
-    private var isStopping: Bool = false
+    private var isStopping: Bool = false  // sticky once the app quits
+    private var hasStarted: Bool = false  // start() was called (credential gate passed)
+    private var reloadRequested = false
+    private var pendingRestart: DispatchWorkItem?
+    private var spawnTime: Date = Date()
+    private var healthFailures = 0
+    private var healthCheckInFlight = false
+    private var portConflictNotified = false
+    private var generationBecameHealthy = false
     private let supportDir: String
     private let logsDir: String
     private let binaryName: String = "callbridge-server"
-    private var spawnTime: Date = Date()
 
     init() {
         supportDir = (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/com.welisa.CallBridge")
@@ -404,43 +433,59 @@ class BackendSupervisor {
         debugLog("BackendSupervisor: Directories ready — support: \(supportDir), logs: \(logsDir)")
     }
 
+    /// PyInstaller --onedir nests the executable in a folder named <binaryName>,
+    /// i.e. <Resources>/callbridge-server/callbridge-server — exec the file, not the folder.
+    private var binaryPath: String {
+        let resourcePath = Bundle.main.resourcePath ?? ""
+        return ((resourcePath as NSString).appendingPathComponent(binaryName) as NSString).appendingPathComponent(binaryName)
+    }
+
     func start() {
-        guard let resourcePath = Bundle.main.resourcePath else {
-            debugLog("BackendSupervisor: No resourcePath")
-            return
+        queue.async {
+            guard !self.isStopping else { return }
+            guard FileManager.default.isExecutableFile(atPath: self.binaryPath) else {
+                debugLog("BackendSupervisor: No executable backend at \(self.binaryPath)")
+                return
+            }
+            self.hasStarted = true
+            self.spawnLocked()
         }
-        // PyInstaller --onedir nests the executable in a folder named <binaryName>,
-        // i.e. <Resources>/callbridge-server/callbridge-server — exec the file, not the folder.
-        let binaryPath = ((resourcePath as NSString).appendingPathComponent(binaryName) as NSString).appendingPathComponent(binaryName)
-        guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
-            debugLog("BackendSupervisor: No executable backend at \(binaryPath)")
-            return
-        }
-        spawn()
     }
 
     /// Restart the running backend so it re-reads credentials from the Keychain on
     /// spawn (used after Settings saves new creds); starts it if not yet running.
     func reloadCredentials() {
-        isStopping = false
-        if let proc = process, proc.isRunning {
-            debugLog("BackendSupervisor: credentials changed — restarting backend")
-            restartCount = max(restartCount, 1)   // skip the restartCount==0 port-in-use heuristic
-            proc.terminate()                       // terminationHandler → scheduleRestart → spawn re-reads Keychain
-        } else {
-            start()
+        queue.async {
+            guard !self.isStopping else { return }
+            if let proc = self.process, proc.isRunning {
+                debugLog("BackendSupervisor: credentials changed — restarting backend")
+                self.reloadRequested = true
+                proc.terminate()   // termination handler respawns promptly (reloadRequested)
+            } else {
+                self.hasStarted = true
+                self.restartCount = 0
+                self.spawnLocked()
+            }
         }
     }
 
-    private func spawn() {
+    private func spawnLocked() {
+        dispatchPrecondition(condition: .onQueue(queue))
         guard !isStopping else { return }
+        pendingRestart?.cancel()
+        pendingRestart = nil
+        if let p = process, p.isRunning { return }   // never run two backends
+        guard FileManager.default.isExecutableFile(atPath: binaryPath) else {
+            debugLog("BackendSupervisor: No executable backend at \(binaryPath) — not spawning")
+            return
+        }
+        reloadRequested = false
 
+        generation += 1
+        generationBecameHealthy = false
+        let gen = generation
         spawnTime = Date()
-
-        let resourcePath = Bundle.main.resourcePath ?? ""
-        // PyInstaller --onedir nests the executable in a folder named <binaryName>,
-        // i.e. <Resources>/callbridge-server/callbridge-server — exec the file, not the folder.
-        let binaryPath = ((resourcePath as NSString).appendingPathComponent(binaryName) as NSString).appendingPathComponent(binaryName)
+        healthFailures = 0
 
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: binaryPath)
@@ -452,158 +497,225 @@ class BackendSupervisor {
         for key in credentialKeys {
             if let value = KeychainHelper.read(key: key) {
                 env[key] = value
-                debugLog("BackendSupervisor: env key \(key) sourced from Keychain")
             }
         }
         proc.environment = env
 
-        // Attach pipes so backend output does not leak to the GUI app's terminal (T-02-09)
-        proc.standardOutput = Pipe()
-        proc.standardError = Pipe()
+        // Backend output goes to a log file. It used to go to Pipe()s that nobody
+        // read: after ~64 KB of uvicorn access/log lines the pipe filled up, the
+        // backend blocked on its next write and every endpoint hung.
+        let outHandle = openBackendLog()
+        proc.standardOutput = outHandle ?? FileHandle.nullDevice
+        proc.standardError = outHandle ?? FileHandle.nullDevice
 
-        proc.terminationHandler = { [weak self] terminatedProcess in
+        proc.terminationHandler = { [weak self] terminated in
             guard let self = self else { return }
-            let status = terminatedProcess.terminationStatus
-            debugLog("BackendSupervisor: Process exited with status \(status)")
-            if self.isStopping { return }
+            let status = terminated.terminationStatus
+            self.queue.async {
+                debugLog("BackendSupervisor: Process (gen \(gen)) exited with status \(status)")
+                guard gen == self.generation else { return }   // an older process — ignore
+                self.process = nil
+                if self.isStopping { return }
 
-            // Fast exit on the first spawn = something already holds :8765 (typically
-            // an orphaned backend from an ungraceful exit). Reclaim the port and retry
-            // instead of giving up permanently — this is the self-heal for "port in use".
-            let elapsed = Date().timeIntervalSince(self.spawnTime)
-            if self.restartCount == 0 && elapsed < 3.0 {
-                debugLog("BackendSupervisor: Fast exit (\(elapsed)s) on first spawn — reclaiming :8765 and retrying")
-                self.reclaimPort()
+                if self.reloadRequested {
+                    self.reloadRequested = false
+                    self.restartCount = 0
+                    self.scheduleRestartLocked(after: 0.5)
+                    return
+                }
+
+                // Exiting before ever answering /health itself usually means something
+                // already holds :8765 — typically an orphaned backend of ours.
+                if !self.generationBecameHealthy {
+                    self.reclaimPortLocked()
+                }
+                self.scheduleRestartLocked(after: nil)
             }
-
-            self.scheduleRestart()
         }
 
         process = proc
         do {
             try proc.run()
-            debugLog("BackendSupervisor: Spawned backend (restart #\(restartCount))")
-            pollHealth(attempt: 0, maxAttempts: 30)
+            debugLog("BackendSupervisor: Spawned backend gen \(gen) (restart #\(restartCount))")
+            pollHealth(gen: gen, attempt: 0, maxAttempts: 45)
         } catch {
             debugLog("BackendSupervisor: Failed to launch: \(error)")
-            scheduleRestart()
+            process = nil
+            scheduleRestartLocked(after: nil)
         }
     }
 
-    private func pollHealth(attempt: Int, maxAttempts: Int) {
-        guard let url = URL(string: "http://localhost:8765/health") else { return }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 1
+    private func openBackendLog() -> FileHandle? {
+        let path = (logsDir as NSString).appendingPathComponent("backend.log")
+        let fm = FileManager.default
+        // Keep it bounded: rotate once it passes 10 MB.
+        if let size = (try? fm.attributesOfItem(atPath: path))?[.size] as? UInt64, size > 10_000_000 {
+            let old = path + ".1"
+            try? fm.removeItem(atPath: old)
+            try? fm.moveItem(atPath: path, toPath: old)
+        }
+        if !fm.fileExists(atPath: path) { fm.createFile(atPath: path, contents: nil) }
+        guard let h = FileHandle(forWritingAtPath: path) else { return nil }
+        h.seekToEndOfFile()
+        return h
+    }
 
-        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+    private func pollHealth(gen: Int, attempt: Int, maxAttempts: Int) {
+        healthCheck(timeout: 1.0) { [weak self] ok, pids in
             guard let self = self else { return }
-            if error == nil, let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                debugLog("BackendSupervisor: Health check OK on attempt \(attempt)")
-                self.restartCount = 0
-                DispatchQueue.main.async {
-                    if let appDelegate = NSApp.delegate as? AppDelegate {
-                        appDelegate.serverReachable = true
-                        appDelegate.rebuildMenu()
+            self.queue.async {
+                guard gen == self.generation, let p = self.process, p.isRunning else { return }
+                // Only *our* process counts: an orphan on :8765 also answers /health.
+                let ours = pids.isEmpty || pids.contains(p.processIdentifier)
+                if ok && !ours {
+                    debugLog("BackendSupervisor: /health answered by another process \(pids) — not ours")
+                }
+                if ok && ours {
+                    self.generationBecameHealthy = true
+                    debugLog("BackendSupervisor: Health check OK on attempt \(attempt)")
+                    self.restartCount = 0
+                    self.portConflictNotified = false
+                    DispatchQueue.main.async {
+                        if let appDelegate = NSApp.delegate as? AppDelegate {
+                            appDelegate.serverReachable = true
+                            appDelegate.rebuildMenu()
+                        }
                     }
-                }
-            } else if attempt < maxAttempts {
-                DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    self?.pollHealth(attempt: attempt + 1, maxAttempts: maxAttempts)
-                }
-            } else {
-                debugLog("BackendSupervisor: Health check timed out after \(maxAttempts)s")
-                DispatchQueue.main.async {
-                    self.showNotification(title: "CallBridge", message: "Server kon niet starten")
-                    if let appDelegate = NSApp.delegate as? AppDelegate {
-                        appDelegate.serverReachable = false
-                        appDelegate.rebuildMenu()
+                } else if attempt < maxAttempts {
+                    self.queue.asyncAfter(deadline: .now() + 1.0) {
+                        self.pollHealth(gen: gen, attempt: attempt + 1, maxAttempts: maxAttempts)
+                    }
+                } else {
+                    debugLog("BackendSupervisor: Health check timed out after \(maxAttempts)s")
+                    DispatchQueue.main.async {
+                        self.showNotification(title: "CallBridge", message: "Server kon niet starten")
+                        if let appDelegate = NSApp.delegate as? AppDelegate {
+                            appDelegate.serverReachable = false
+                            appDelegate.rebuildMenu()
+                        }
                     }
                 }
             }
-        }.resume()
-    }
-
-    private func scheduleRestart() {
-        guard !isStopping else { return }
-        let delay = min(3.0 * pow(2.0, Double(restartCount)), 30.0)
-        restartCount += 1
-        debugLog("BackendSupervisor: Crash detected (restart \(restartCount)), retrying in \(delay)s")
-        DispatchQueue.global(qos: .background).asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.spawn()
         }
     }
 
+    private func scheduleRestartLocked(after fixedDelay: TimeInterval?) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard !isStopping else { return }
+        pendingRestart?.cancel()
+        let delay = fixedDelay ?? min(3.0 * pow(2.0, Double(restartCount)), 30.0)
+        restartCount += 1
+        debugLog("BackendSupervisor: restart \(restartCount) scheduled in \(delay)s")
+        let item = DispatchWorkItem { [weak self] in self?.spawnLocked() }
+        pendingRestart = item
+        queue.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    /// Quit: stop the backend and wait (bounded) so it doesn't outlive the app.
+    /// Called on the main thread from applicationWillTerminate.
     func stop() {
-        isStopping = true
-        guard let proc = process else { return }
+        let proc: Process? = queue.sync {
+            isStopping = true
+            pendingRestart?.cancel()
+            pendingRestart = nil
+            return process
+        }
+        guard let proc = proc, proc.isRunning else { return }
         proc.terminate()
         debugLog("BackendSupervisor: Sent SIGTERM to backend")
-
-        // Wait up to 5 seconds for the process to exit
-        DispatchQueue.global(qos: .background).async {
-            var waited = 0
-            while proc.isRunning && waited < 50 {
-                Thread.sleep(forTimeInterval: 0.1)
-                waited += 1
-            }
-            if proc.isRunning {
-                // Force kill: use Darwin kill() since Swift Process has no SIGKILL method
-                kill(proc.processIdentifier, SIGKILL)
-                debugLog("BackendSupervisor: Sent SIGKILL to backend (still running after 5s)")
-            }
-            debugLog("BackendSupervisor: Backend stopped")
+        let deadline = Date().addingTimeInterval(3)
+        while proc.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        if proc.isRunning {
+            kill(proc.processIdentifier, SIGKILL)
+            debugLog("BackendSupervisor: Sent SIGKILL to backend (still running after 3s)")
         }
     }
 
-    private var isHealing = false
-
-    /// Self-heal: if /health doesn't answer, reclaim :8765 from any orphan and
-    /// (re)spawn the backend. Idempotent. Runs synchronously — call OFF the main thread.
+    /// Self-heal, triggered when the menu can't reach the backend. Conservative on
+    /// purpose — a busy or still-starting backend is never killed:
+    ///  - nothing running (crashed, restart pending): spawn now;
+    ///  - running: only after 3 consecutive failed health checks, and only once it
+    ///    has been up for 60s, is it considered hung and restarted.
+    /// Does nothing before the credential gate has started the backend. Safe from any thread.
     func ensureRunning() {
-        guard !isHealing else { return }
-        isHealing = true
-        defer { isHealing = false }
-
-        if healthCheckSync(timeout: 1.0) { return }   // backend already fine — no-op
-        debugLog("BackendSupervisor: ensureRunning — backend unhealthy, reclaiming :8765 + restarting")
-        isStopping = true
-        if let p = process, p.isRunning { kill(p.processIdentifier, SIGKILL) }
-        process = nil
-        reclaimPort()
-        isStopping = false
-        restartCount = 0
-        spawn()
-        // Block briefly so overlapping callers don't double-spawn during startup.
-        for _ in 0..<12 {
-            if healthCheckSync(timeout: 0.5) { break }
-            Thread.sleep(forTimeInterval: 0.3)
+        queue.async {
+            guard self.hasStarted, !self.isStopping else { return }
+            guard let p = self.process, p.isRunning else {
+                debugLog("BackendSupervisor: ensureRunning — no backend running, spawning now")
+                self.restartCount = 0
+                self.spawnLocked()
+                return
+            }
+            guard !self.healthCheckInFlight else { return }
+            self.healthCheckInFlight = true
+            let gen = self.generation
+            self.healthCheck(timeout: 3.0) { ok, _ in
+                self.queue.async {
+                    self.healthCheckInFlight = false
+                    guard gen == self.generation, let p = self.process, p.isRunning else { return }
+                    if ok { self.healthFailures = 0; return }
+                    self.healthFailures += 1
+                    let uptime = Date().timeIntervalSince(self.spawnTime)
+                    debugLog("BackendSupervisor: ensureRunning — health failed (\(self.healthFailures)x, up \(Int(uptime))s)")
+                    if self.healthFailures >= 3 && uptime > 60 {
+                        debugLog("BackendSupervisor: backend hung — restarting")
+                        self.healthFailures = 0
+                        p.terminate()
+                        let victim = p
+                        self.queue.asyncAfter(deadline: .now() + 5) {
+                            if victim.isRunning { kill(victim.processIdentifier, SIGKILL) }
+                        }
+                    }
+                }
+            }
         }
     }
 
-    /// Kill whatever is LISTENING on :8765 (an orphaned backend from an ungraceful
-    /// exit). Targets the listener only, so the GUI's own client connection — which is
-    /// not in the LISTEN state — is never killed.
-    private func reclaimPort() {
+    /// Kill an orphaned CallBridge backend LISTENING on :8765. Only processes whose
+    /// executable is a `callbridge-server` are touched — never an unrelated server
+    /// (e.g. a dev uvicorn), and never the GUI's own client connection.
+    private func reclaimPortLocked() {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "pids=$(/usr/sbin/lsof -nP -iTCP:8765 -sTCP:LISTEN -t); [ -n \"$pids\" ] && kill -9 $pids"]
-        try? p.run()
+        p.arguments = ["-c", """
+            rc=1
+            for pid in $(/usr/sbin/lsof -nP -iTCP:8765 -sTCP:LISTEN -t); do
+              case "$(/bin/ps -o comm= -p "$pid")" in
+                *callbridge-server*) kill -9 "$pid" && rc=0 ;;
+                *) echo "foreign listener $pid" ;;
+              esac
+            done
+            exit $rc
+            """]
+        let out = Pipe()
+        p.standardOutput = out
+        guard (try? p.run()) != nil else { return }
         p.waitUntilExit()
-        debugLog("BackendSupervisor: reclaimPort — freed :8765 (exit \(p.terminationStatus))")
+        let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        debugLog("BackendSupervisor: reclaimPort — exit \(p.terminationStatus) \(text)")
+        if text.contains("foreign listener") && !portConflictNotified {
+            portConflictNotified = true
+            DispatchQueue.main.async {
+                self.showNotification(title: "CallBridge", message: "Poort 8765 is bezet door een ander programma")
+            }
+        }
     }
 
-    private func healthCheckSync(timeout: TimeInterval) -> Bool {
-        guard let url = URL(string: "http://localhost:8765/health") else { return false }
+    /// Completion: (healthy, pid/ppid reported by the responder — empty if unknown).
+    private func healthCheck(timeout: TimeInterval, completion: @escaping (Bool, [Int32]) -> Void) {
+        guard let url = URL(string: "http://localhost:8765/health") else { completion(false, []); return }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
-        let sem = DispatchSemaphore(value: 0)
-        var ok = false
-        URLSession.shared.dataTask(with: request) { _, response, error in
-            if error == nil, let http = response as? HTTPURLResponse, http.statusCode == 200 { ok = true }
-            sem.signal()
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            let ok = error == nil && (response as? HTTPURLResponse)?.statusCode == 200
+            var pids: [Int32] = []
+            if ok, let data = data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                // ppid too, in case the PyInstaller bootloader runs Python as a child.
+                for key in ["pid", "ppid"] { if let n = json[key] as? Int { pids.append(Int32(n)) } }
+            }
+            completion(ok, pids)
         }.resume()
-        _ = sem.wait(timeout: .now() + timeout + 0.3)
-        return ok
     }
 
     private func showNotification(title: String, message: String) {
@@ -668,8 +780,8 @@ class SettingsViewModel: ObservableObject {
         <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:partner.soap.sforce.com">
           <soapenv:Body>
             <urn:login>
-              <urn:username>\(sfUsername)</urn:username>
-              <urn:password>\(sfPassword)\(sfSecurityToken)</urn:password>
+              <urn:username>\(xmlEscape(sfUsername))</urn:username>
+              <urn:password>\(xmlEscape(sfPassword + sfSecurityToken))</urn:password>
             </urn:login>
           </soapenv:Body>
         </soapenv:Envelope>
@@ -778,7 +890,7 @@ struct SettingsView: View {
 
 // MARK: - App Delegate
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
 
     let serverURL = "http://localhost:8765"
     let phoneAppBundleID = "com.apple.mobilephone"
@@ -789,6 +901,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var state: CallState = .idle
     var pollTimer: Timer?
     var dialogWindow: NSWindow?
+    var dialogAudioPath: String?
+    /// Separate from dialogWindow: a call can end while the manual window is open,
+    /// and one shared slot made each window's buttons close the other one.
+    var manualWindow: NSWindow?
+    var manualViewModel: ManualProcessViewModel?
+    /// Identifies the call currently being recorded. Every async completion of the
+    /// call-end detection checks it, so a restarted or finished call can never be
+    /// completed twice (double dialog / double upload) or by a stale callback.
+    var currentCallID: UUID?
+    var stabilityCheckInFlight = false
+    var noFileCheckScheduled = false
+    let ahStatePath = NSTemporaryDirectory() + "callbridge_ah_state.json"
     var settingsWindow: NSWindow?
     var statusTimer: Timer?
     var lastStatus: StatusResponse?
@@ -798,8 +922,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var updateTimer: Timer?
     let backendSupervisor = BackendSupervisor()
 
+    /// Set in applicationWillFinishLaunching when another copy is already running.
+    var otherInstance: NSRunningApplication?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if let bundleID = Bundle.main.bundleIdentifier {
+            otherInstance = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+                .first { $0 != NSRunningApplication.current }
+        }
+        // Registered here (not in didFinishLaunching) so the tel: event that launched
+        // the app is never missed — also when this turns out to be a duplicate.
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleURL(_:withReply:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         debugLog("App launching, recordingsDir: \(recordingsDir), logPath: \(debugLogPath)")
+
+        // Single instance: two copies (e.g. /Applications + a build folder) fought over
+        // :8765 and over the tel: handler, killing each other's backend. A tel: link
+        // that launched this duplicate is handed to the running instance (handleURL),
+        // so give that Apple event a moment to arrive before quitting.
+        if let other = otherInstance {
+            debugLog("Another CallBridge instance is already running (\(other.bundleURL?.path ?? "?")) — exiting")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { NSApp.terminate(nil) }
+            return
+        }
 
         // Create recordings directory
         try? FileManager.default.createDirectory(atPath: recordingsDir, withIntermediateDirectories: true)
@@ -810,17 +962,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Claim the tel: handler so calls route through CallBridge (record + forward).
         claimTelHandlerIfNeeded()
-
-        // Gate backend start on credential presence check (D-05, D-06)
-        credentialCheckPassed { [weak self] passed in
-            guard let self = self else { return }
-            if passed {
-                self.backendSupervisor.start()
-            } else {
-                self.pendingBackendStart = true
-                self.showSettings()
-            }
-        }
 
         // Setup menu bar
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -833,14 +974,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = statusMenu
         rebuildMenu()
 
-        // Register for URL events
-        let em = NSAppleEventManager.shared()
-        em.setEventHandler(
-            self,
-            andSelector: #selector(handleURL(_:withReply:)),
-            forEventClass: AEEventClass(kInternetEventClass),
-            andEventID: AEEventID(kAEGetURL)
-        )
+        // Gate backend start on credential presence check (D-05, D-06). After the
+        // menu-bar icon exists, so slow Keychain prompts don't leave the app invisible.
+        credentialCheckPassed { [weak self] passed in
+            guard let self = self else { return }
+            if passed {
+                self.backendSupervisor.start()
+            } else {
+                self.pendingBackendStart = true
+                self.showSettings()
+            }
+        }
+
 
         // Check for unprocessed recordings on launch
         checkForOrphanedRecordings()
@@ -883,6 +1028,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func claimTelHandlerIfNeeded() {
         guard let probe = URL(string: "tel:0") else { return }
         let myURL = Bundle.main.bundleURL
+        // Only an installed copy may claim tel:. A build-folder, worktree or
+        // translocated (quarantined, run from Downloads) copy would otherwise hijack
+        // every call link.
+        let path = myURL.standardizedFileURL.path
+        let installed = path.hasPrefix("/Applications/")
+            || path.hasPrefix((NSHomeDirectory() as NSString).appendingPathComponent("Applications") + "/")
+        guard installed, !path.contains("/AppTranslocation/") else {
+            debugLog("claimTelHandler: not claiming tel: from non-installed location \(path)")
+            return
+        }
         if NSWorkspace.shared.urlForApplication(toOpen: probe)?.standardizedFileURL == myURL.standardizedFileURL {
             debugLog("claimTelHandler: already the default tel: handler")
             return
@@ -897,6 +1052,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func credentialCheckPassed(completion: @escaping (Bool) -> Void) {
+        // Keychain reads can block for seconds (access prompts) — keep them off main.
+        DispatchQueue.global(qos: .userInitiated).async {
+            self.runCredentialCheck { passed in DispatchQueue.main.async { completion(passed) } }
+        }
+    }
+
+    private func runCredentialCheck(completion: @escaping (Bool) -> Void) {
         let keys = ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY",
                     "SF_USERNAME", "SF_PASSWORD", "SF_SECURITY_TOKEN", "SF_DOMAIN"]
         guard KeychainHelper.allPresent(keys: keys) else {
@@ -917,8 +1079,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:urn="urn:partner.soap.sforce.com">
           <soapenv:Body>
             <urn:login>
-              <urn:username>\(username)</urn:username>
-              <urn:password>\(password)\(token)</urn:password>
+              <urn:username>\(xmlEscape(username))</urn:username>
+              <urn:password>\(xmlEscape(password + token))</urn:password>
             </urn:login>
           </soapenv:Body>
         </soapenv:Envelope>
@@ -931,21 +1093,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         request.timeoutInterval = 15
 
         URLSession.shared.dataTask(with: request) { data, response, error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    debugLog("credentialCheckPassed: SOAP error — \(error.localizedDescription)")
-                    completion(false)
-                    return
-                }
-                guard let data = data,
-                      let body = String(data: data, encoding: .utf8) else {
-                    completion(false)
-                    return
-                }
-                let passed = body.contains("<sessionId>")
-                debugLog("credentialCheckPassed: SOAP login \(passed ? "OK" : "FAILED")")
-                completion(passed)
+            if let error = error {
+                // Offline at login (Wi-Fi not up yet, on the train…) is not a credential
+                // problem: start the backend anyway; it connects to Salesforce lazily.
+                debugLog("credentialCheckPassed: SOAP error — \(error.localizedDescription) — starting anyway")
+                completion(true)
+                return
             }
+            guard let data = data,
+                  let body = String(data: data, encoding: .utf8) else {
+                completion(true)
+                return
+            }
+            let passed = body.contains("<sessionId>")
+            // Only an explicit login fault means the credentials are wrong.
+            let authFault = body.contains("INVALID_LOGIN") || body.contains("LOGIN_MUST_USE_SECURITY_TOKEN")
+                || body.contains("INVALID_OPERATION_WITH_EXPIRED_PASSWORD")
+            debugLog("credentialCheckPassed: SOAP login \(passed ? "OK" : (authFault ? "FAILED (auth)" : "FAILED (other)"))")
+            completion(passed || !authFault)
         }.resume()
     }
 
@@ -972,49 +1137,47 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - NSMenuDelegate — fetch status on demand (only when the menu opens)
 
-    /// Called by AppKit right before the status-bar menu is displayed. We fetch the
-    /// backend status synchronously here so the menu always opens with fresh data,
-    /// without any continuous background polling. If the backend doesn't answer we
-    /// trigger a background self-heal; the next open reflects the recovered state.
+    /// Called by AppKit right before the status-bar menu is displayed. The menu opens
+    /// immediately with the last known status and refreshes in place once /status
+    /// answers — the main thread is never blocked waiting for the backend.
     func menuNeedsUpdate(_ menu: NSMenu) {
-        let ok = fetchStatusSync(timeout: 1.0)
-        serverReachable = ok
-        if !ok {
-            lastStatus = nil
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-                self?.backendSupervisor.ensureRunning()
-            }
-        }
         rebuildMenu()
+        refreshStatus()
     }
 
-    /// Synchronously fetch /status with a short timeout. Safe to call on the main
-    /// thread from menuNeedsUpdate: the URLSession completion runs on its own queue,
-    /// so the semaphore never deadlocks. Returns true on a decodable response.
-    @discardableResult
-    func fetchStatusSync(timeout: TimeInterval) -> Bool {
-        guard let url = URL(string: "\(serverURL)/status") else { return false }
+    private var statusRefreshInFlight = false
+
+    func refreshStatus() {
+        guard !statusRefreshInFlight, let url = URL(string: "\(serverURL)/status") else { return }
+        statusRefreshInFlight = true
         var request = URLRequest(url: url)
-        request.timeoutInterval = timeout
-        let sem = DispatchSemaphore(value: 0)
-        var fetched: StatusResponse?
-        URLSession.shared.dataTask(with: request) { data, _, error in
+        request.timeoutInterval = 3
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            var fetched: StatusResponse?
             if let error = error {
-                debugLog("fetchStatusSync error: \(error.localizedDescription)")
-            } else if let data = data,
-                      let status = try? JSONDecoder().decode(StatusResponse.self, from: data) {
-                fetched = status
-            } else {
-                debugLog("fetchStatusSync decode failed")
+                debugLog("refreshStatus error: \(error.localizedDescription)")
+            } else if let data = data {
+                do {
+                    fetched = try JSONDecoder().decode(StatusResponse.self, from: data)
+                } catch {
+                    debugLog("refreshStatus decode failed: \(error)")
+                }
             }
-            sem.signal()
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.statusRefreshInFlight = false
+                // Reachable = the server answered. A payload we can't decode is a bug,
+                // not an outage — don't report "unreachable" or trigger a self-heal for it.
+                let answered = error == nil && (response as? HTTPURLResponse) != nil
+                self.serverReachable = answered
+                if let fetched = fetched { self.lastStatus = fetched }
+                if !answered {
+                    self.lastStatus = nil
+                    self.backendSupervisor.ensureRunning()
+                }
+                self.rebuildMenu()
+            }
         }.resume()
-        _ = sem.wait(timeout: .now() + timeout + 0.3)
-        if let fetched = fetched {
-            lastStatus = fetched
-            debugLog("fetchStatusSync OK — processing: \(fetched.processing.count), completed: \(fetched.completed.count)")
-        }
-        return fetched != nil
     }
 
     func rebuildMenu() {
@@ -1107,16 +1270,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         recentItem.submenu = recentSubmenu
         menu.addItem(recentItem)
 
-        // Update section
-        if let version = updateChecker.availableVersion {
-            let updateItem = NSMenuItem(title: "⬆ Update naar v\(version)", action: #selector(installUpdate), keyEquivalent: "")
-            updateItem.target = self
-            menu.addItem(updateItem)
-        } else {
-            let checkItem = NSMenuItem(title: "Zoek naar updates...", action: #selector(checkForUpdatesManually), keyEquivalent: "u")
-            checkItem.target = self
-            menu.addItem(checkItem)
-        }
+        // Auto-update is disabled (private repo, see applicationDidFinishLaunching);
+        // a "check for updates" item that silently did nothing only confused users.
+        let versionItem = NSMenuItem(title: "Versie \(appVersion)", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
 
         let settingsMenuItem = NSMenuItem(title: "Instellingen…", action: #selector(showSettings), keyEquivalent: "")
         settingsMenuItem.target = self
@@ -1199,7 +1357,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func showManualProcessWindow(audioPath: String) {
+        dismissManualWindow()
         let viewModel = ManualProcessViewModel(audioPath: audioPath, appDelegate: self)
+        manualViewModel = viewModel
 
         let view = ManualProcessView(viewModel: viewModel)
         let hostingView = NSHostingView(rootView: view)
@@ -1215,8 +1375,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.level = .floating
         window.center()
         window.isReleasedWhenClosed = false
+        window.delegate = self
 
-        dialogWindow = window
+        manualWindow = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -1224,36 +1385,73 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - URL Handler
 
     @objc func handleURL(_ event: NSAppleEventDescriptor, withReply reply: NSAppleEventDescriptor) {
-        guard let urlString = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
-              let url = URL(string: urlString) else { return }
+        guard let urlString = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue else { return }
 
-        let phoneNumber = urlString
-            .replacingOccurrences(of: "tel://", with: "")
-            .replacingOccurrences(of: "tel:", with: "")
-            .removingPercentEncoding ?? urlString
-
-        NSLog("CallBridge: tel: URL received for %@", phoneNumber)
-
-        // If already recording, queue or ignore
-        if case .recording = state {
-            NSLog("CallBridge: Already recording, ignoring new call")
+        // Duplicate instance about to quit: pass the link to the running one.
+        if let other = otherInstance, let otherURL = other.bundleURL, let url = URL(string: urlString) {
+            debugLog("handleURL: duplicate instance — forwarding \(urlString) to \(otherURL.path)")
+            NSWorkspace.shared.open([url], withApplicationAt: otherURL, configuration: NSWorkspace.OpenConfiguration())
+            return
+        }
+        // Links with spaces ("tel:+31 20 123 4567") are not valid URLs as-is.
+        guard let url = URL(string: urlString)
+                ?? urlString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed).flatMap({ URL(string: $0) })
+        else {
+            NSLog("CallBridge: Ignoring unparseable tel: URL %@", urlString)
             return
         }
 
-        // 1. Snapshot existing files in recordings folder
-        let existingFiles = snapshotRecordingsFolder()
+        var phoneNumber = urlString
+            .replacingOccurrences(of: "tel://", with: "")
+            .replacingOccurrences(of: "tel:", with: "")
+        phoneNumber = phoneNumber.removingPercentEncoding ?? phoneNumber
+        // Drop RFC 3966 parameters such as ";phone-context=…" or ";ext=…".
+        if let semi = phoneNumber.firstIndex(of: ";") { phoneNumber = String(phoneNumber[..<semi]) }
 
-        // 2. Start Audio Hijack recording
+        NSLog("CallBridge: tel: URL received for %@", phoneNumber)
+
+        // A new number while a call is being recorded means the user changed their
+        // mind: abandon the current recording and restart the whole flow for the new
+        // number. The call is forwarded right away (so the call dialog appears at
+        // once); recording restarts after Audio Hijack has processed the stop.
+        if case let .recording(previousNumber, _, _) = state {
+            NSLog("CallBridge: New number while recording %@ — restarting flow for %@", previousNumber, phoneNumber)
+            debugLog("handleURL: restart — abandoning recording for \(previousNumber), new call \(phoneNumber)")
+            stopPolling()
+            currentCallID = nil
+            stopAudioHijack()
+            forwardCall(url: url)
+            let restartID = UUID()
+            currentCallID = restartID
+            state = .recording(phoneNumber: phoneNumber, startTime: Date(), existingFiles: snapshotRecordingsFolder())
+            updateStatusIcon()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                // Another number may have been clicked in the meantime.
+                guard let self = self, self.currentCallID == restartID else { return }
+                self.beginRecording(phoneNumber: phoneNumber, callID: restartID)
+            }
+            return
+        }
+
+        forwardCall(url: url)
+        beginRecording(phoneNumber: phoneNumber, callID: UUID())
+    }
+
+    /// Snapshot the recordings folder, start Audio Hijack and start polling for the
+    /// end of the call. Independent of any save dialog that may still be open for a
+    /// previous call — those only touch state that belongs to them.
+    private func beginRecording(phoneNumber: String, callID: UUID) {
+        // A state file from the previous call says running=false and would be read
+        // on this call's first poll, ending it immediately.
+        try? FileManager.default.removeItem(atPath: ahStatePath)
+
+        let existingFiles = snapshotRecordingsFolder()
         startAudioHijack()
 
-        // 3. Forward to Phone.app
-        forwardCall(url: url)
-
-        // 4. Set state to recording
+        currentCallID = callID
+        stabilityCheckInFlight = false
         state = .recording(phoneNumber: phoneNumber, startTime: Date(), existingFiles: existingFiles)
         updateStatusIcon()
-
-        // 5. Start polling for call end
         startPolling()
     }
 
@@ -1268,7 +1466,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func runAudioHijackScript(_ script: String) {
-        let tmpPath = NSTemporaryDirectory() + "callbridge_cmd.ahcommand"
+        // Unique file per command: with one shared path, a quick stop→start (or a
+        // state query right after a stop) overwrote the file before Audio Hijack read
+        // it, silently dropping a command.
+        let tmpPath = NSTemporaryDirectory() + "callbridge_cmd_\(UUID().uuidString).ahcommand"
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60) {
+            try? FileManager.default.removeItem(atPath: tmpPath)
+        }
         do {
             try script.write(toFile: tmpPath, atomically: true, encoding: .utf8)
             if let ahURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.rogueamoeba.audiohijack") {
@@ -1289,7 +1493,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let script = """
         let s = app.sessionWithName("\(audioHijackSessionName)");
         let data = JSON.stringify({running: s.running, recordingCount: s.recordings.length});
-        app.runShellCommand('/bin/echo \\'' + data + '\\' > /tmp/ah_state.json');
+        app.runShellCommand('/bin/echo \\'' + data + '\\' > \(ahStatePath)');
         """
         runAudioHijackScript(script)
     }
@@ -1302,19 +1506,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return Set(files)
     }
 
-    func findNewRecording(existingFiles: Set<String>) -> String? {
+    func findNewRecording(existingFiles: Set<String>, since startTime: Date? = nil) -> String? {
         let fm = FileManager.default
         let currentFiles = (try? fm.contentsOfDirectory(atPath: recordingsDir)) ?? []
         let extensions = ["mp3", "wav", "m4a", "aiff", "caf"]
 
-        for file in currentFiles {
-            if !existingFiles.contains(file) {
-                let ext = (file as NSString).pathExtension.lowercased()
-                if extensions.contains(ext) {
-                    let fullPath = (recordingsDir as NSString).appendingPathComponent(file)
-                    return fullPath
-                }
+        for file in currentFiles.sorted() {
+            guard !existingFiles.contains(file) else { continue }
+            let ext = (file as NSString).pathExtension.lowercased()
+            guard extensions.contains(ext) else { continue }
+            let fullPath = (recordingsDir as NSString).appendingPathComponent(file)
+            // After a restart the abandoned call's file can still be finalised after
+            // the snapshot; never attribute a file created before this call started.
+            if let startTime = startTime,
+               let created = (try? fm.attributesOfItem(atPath: fullPath))?[.creationDate] as? Date,
+               created < startTime.addingTimeInterval(-2) {
+                continue
             }
+            return fullPath
         }
         return nil
     }
@@ -1348,7 +1557,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func pollForCallEnd() {
-        guard case let .recording(phoneNumber, startTime, existingFiles) = state else {
+        guard case let .recording(phoneNumber, startTime, existingFiles) = state,
+              let callID = currentCallID else {
             stopPolling()
             return
         }
@@ -1358,49 +1568,62 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSLog("CallBridge: Recording timeout (2h), stopping")
             stopAudioHijack()
             stopPolling()
+            currentCallID = nil
             state = .idle
             updateStatusIcon()
             return
         }
 
-        // Check for new file in recordings folder
-        if let newFile = findNewRecording(existingFiles: existingFiles) {
-            NSLog("CallBridge: New recording found: %@", newFile)
+        let newFile = findNewRecording(existingFiles: existingFiles, since: startTime)
 
-            // Wait for file to stabilize (background thread). Keep the poll timer
-            // running until the file is confirmed stable, so a still-growing file
-            // doesn't freeze detection — the next cycle simply re-checks. (restored
-            // pre-rewrite behaviour; the "CR-03" stop-immediately change deadlocked.)
-            DispatchQueue.global().async { [weak self] in
-                guard let self = self else { return }
-                if self.isFileSizeStable(newFile) {
+        // Audio Hijack state from the previous cycle's query. Ignored during a short
+        // grace period: a cold-launching Audio Hijack can still report running=false
+        // for a session it is about to start.
+        var ahStopped = false
+        if Date().timeIntervalSince(startTime) > 10,
+           let data = FileManager.default.contents(atPath: ahStatePath),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let running = json["running"] as? Bool {
+            ahStopped = !running
+        }
+
+        if let newFile = newFile {
+            // One stability check at a time (it takes 2s, off the main thread). The
+            // timer keeps running so a still-growing file is simply re-checked on the
+            // next cycle; completion is guarded by callID so it can fire only once.
+            if !stabilityCheckInFlight {
+                stabilityCheckInFlight = true
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    guard let self = self else { return }
+                    let stable = self.isFileSizeStable(newFile)
                     DispatchQueue.main.async {
-                        self.stopPolling()
-                        self.stopAudioHijack()
-                        self.onRecordingComplete(phoneNumber: phoneNumber, audioPath: newFile)
+                        guard self.currentCallID == callID else { return }   // call restarted/ended meanwhile
+                        self.stabilityCheckInFlight = false
+                        guard stable else { return }
+                        // A size that holds still for 2s while Audio Hijack still reports
+                        // running can be a silent stretch mid-call — only finish when the
+                        // session stopped, or the file has been idle long enough.
+                        if !ahStopped && !self.fileIdle(newFile, seconds: 5) { return }
+                        self.finishRecording(callID: callID, phoneNumber: phoneNumber, audioPath: newFile, stopAH: !ahStopped)
                     }
                 }
             }
-        }
-
-        // Also query Audio Hijack state (writes to /tmp/ah_state.json)
-        // Read previous state file
-        if let data = FileManager.default.contents(atPath: "/tmp/ah_state.json"),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let running = json["running"] as? Bool,
-           !running {
-            NSLog("CallBridge: Audio Hijack session stopped")
-            // Session stopped but no new file yet — wait a bit more
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-                guard let self = self else { return }
-                if let newFile = self.findNewRecording(existingFiles: existingFiles) {
-                    if self.isFileSizeStable(newFile) {
-                        self.stopPolling()
-                        self.onRecordingComplete(phoneNumber: phoneNumber, audioPath: newFile)
+        } else if ahStopped {
+            // Session stopped but no new file yet — give Audio Hijack a moment to
+            // finalise, then give up if there still is nothing.
+            NSLog("CallBridge: Audio Hijack session stopped, no file yet")
+            if !noFileCheckScheduled {
+                noFileCheckScheduled = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                    guard let self = self else { return }
+                    self.noFileCheckScheduled = false
+                    guard self.currentCallID == callID else { return }
+                    if self.findNewRecording(existingFiles: existingFiles, since: startTime) != nil {
+                        return  // the regular poll will pick it up and check stability
                     }
-                } else {
                     NSLog("CallBridge: No recording file found after session stop")
                     self.stopPolling()
+                    self.currentCallID = nil
                     self.state = .idle
                     self.updateStatusIcon()
                     self.showNotification(title: "CallBridge", message: "Geen opname gevonden")
@@ -1410,6 +1633,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Query for next poll cycle
         queryAudioHijackState()
+    }
+
+    /// True when the file has not been modified for `seconds`.
+    private func fileIdle(_ path: String, seconds: TimeInterval) -> Bool {
+        guard let mod = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date else { return false }
+        return Date().timeIntervalSince(mod) >= seconds
+    }
+
+    /// Single exit point from .recording to the save dialog. Idempotent per call.
+    private func finishRecording(callID: UUID, phoneNumber: String, audioPath: String, stopAH: Bool) {
+        guard currentCallID == callID, case .recording = state else { return }
+        currentCallID = nil
+        stopPolling()
+        if stopAH { stopAudioHijack() }
+        onRecordingComplete(phoneNumber: phoneNumber, audioPath: audioPath)
     }
 
     // MARK: - Post-Recording Flow
@@ -1430,8 +1668,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Server Communication
 
     func lookupContact(phone: String, completion: @escaping (ContactInfo?) -> Void) {
-        let encoded = phone.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? phone
-        guard let url = URL(string: "\(serverURL)/contact-search?phone=\(encoded)") else {
+        guard let url = contactSearchURL(name: "phone", value: phone) else {
             completion(nil)
             return
         }
@@ -1447,9 +1684,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }.resume()
     }
 
+    /// Properly encoded query (".urlQueryAllowed" leaves & = + unescaped, so
+    /// "Bakker & Zn" was split and "+31…" arrived as " 31…").
+    private func contactSearchURL(name: String, value: String) -> URL? {
+        var comps = URLComponents(string: "\(serverURL)/contact-search")
+        comps?.queryItems = [URLQueryItem(name: name, value: value)]
+        let encoded = comps?.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        comps?.percentEncodedQuery = encoded
+        return comps?.url
+    }
+
     func searchContacts(query: String, completion: @escaping ([ContactInfo]) -> Void) {
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
-        guard let url = URL(string: "\(serverURL)/contact-search?q=\(encoded)") else {
+        guard let url = contactSearchURL(name: "q", value: query) else {
             completion([])
             return
         }
@@ -1465,63 +1711,69 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func sendToBackend(audioPath: String, phoneNumber: String, contact: ContactInfo?, direction: String = "Outbound") {
-        state = .processing
-        updateStatusIcon()
-
         guard let url = URL(string: "\(serverURL)/process") else { return }
+        beginBackendWork()
 
-        let boundary = UUID().uuidString
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 30
+        // Reading (possibly hundreds of MB) and building the body off the main thread.
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard let fileData = FileManager.default.contents(atPath: audioPath), !fileData.isEmpty else {
+                DispatchQueue.main.async {
+                    NSLog("CallBridge: Cannot read recording %@", audioPath)
+                    self.showNotification(title: "CallBridge", message: "Fout: opname niet leesbaar")
+                    self.endBackendWork()
+                }
+                return
+            }
 
-        var body = Data()
+            let boundary = UUID().uuidString
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 120
 
-        func addField(_ name: String, _ value: String) {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
-            body.append("\(value)\r\n".data(using: .utf8)!)
-        }
-
-        addField("phone_number", phoneNumber)
-        addField("direction", direction)
-        if let c = contact {
-            if let id = c.id { addField("salesforce_id", id) }
-            addField("salesforce_type", c.type)
-        }
-
-        // Audio file
-        let filename = (audioPath as NSString).lastPathComponent
-        if let fileData = FileManager.default.contents(atPath: audioPath) {
+            var body = Data()
+            body.append(Self.multipartField("phone_number", phoneNumber, boundary: boundary))
+            body.append(Self.multipartField("direction", direction, boundary: boundary))
+            if let c = contact, let id = c.id {
+                body.append(Self.multipartField("salesforce_id", id, boundary: boundary))
+                body.append(Self.multipartField("salesforce_type", c.type, boundary: boundary))
+            }
+            let filename = (audioPath as NSString).lastPathComponent.replacingOccurrences(of: "\"", with: "_")
+            let mime: String
+            switch (audioPath as NSString).pathExtension.lowercased() {
+            case "wav": mime = "audio/wav"
+            case "m4a": mime = "audio/mp4"
+            case "aiff": mime = "audio/aiff"
+            case "caf": mime = "audio/x-caf"
+            default: mime = "audio/mpeg"
+            }
             body.append("--\(boundary)\r\n".data(using: .utf8)!)
             body.append("Content-Disposition: form-data; name=\"audio\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
-            body.append("Content-Type: audio/mpeg\r\n\r\n".data(using: .utf8)!)
+            body.append("Content-Type: \(mime)\r\n\r\n".data(using: .utf8)!)
             body.append(fileData)
             body.append("\r\n".data(using: .utf8)!)
-        }
+            body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-        request.httpBody = body
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    NSLog("CallBridge: Backend error: %@", error.localizedDescription)
-                    self?.showNotification(title: "CallBridge", message: "Fout: \(error.localizedDescription)")
-                } else {
-                    NSLog("CallBridge: Sent to backend successfully")
-                    self?.showNotification(title: "CallBridge", message: "Opname wordt verwerkt...")
+            URLSession.shared.uploadTask(with: request, from: body) { data, response, error in
+                let failure = Self.backendFailure(data, response, error)
+                DispatchQueue.main.async {
+                    if let failure = failure {
+                        NSLog("CallBridge: Backend error: %@", failure)
+                        self.showNotification(title: "CallBridge", message: "Fout: \(failure) — opname bewaard")
+                    } else {
+                        NSLog("CallBridge: Sent to backend successfully")
+                        self.showNotification(title: "CallBridge", message: "Opname wordt verwerkt...")
+                    }
+                    self.endBackendWork()
                 }
-                self?.state = .idle
-                self?.updateStatusIcon()
-            }
-        }.resume()
+            }.resume()
+        }
     }
 
     // MARK: - Save Dialog
 
     func showSaveDialog(phoneNumber: String, audioPath: String, contact: ContactInfo?) {
+        dismissDialog()
         let viewModel = SaveDialogViewModel(
             phoneNumber: phoneNumber,
             audioPath: audioPath,
@@ -1543,9 +1795,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         window.level = .floating
         window.center()
         window.isReleasedWhenClosed = false
+        window.delegate = self
 
         // Store reference
         dialogWindow = window
+        dialogAudioPath = audioPath
 
         // Show and activate
         window.makeKeyAndOrderFront(nil)
@@ -1553,8 +1807,127 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func dismissDialog() {
-        dialogWindow?.close()
+        let window = dialogWindow
         dialogWindow = nil
+        dialogAudioPath = nil
+        window?.close()
+    }
+
+    func dismissManualWindow() {
+        manualViewModel?.stopPlayback()
+        manualViewModel = nil
+        let window = manualWindow
+        manualWindow = nil
+        window?.close()
+    }
+
+    /// Red close button: the recording is kept on disk (reachable via "Recente
+    /// opnames"); only the dialog's own state is released — never a newer call's.
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        if window === dialogWindow {
+            // This window's own recording — a newer call may already be in .showingDialog.
+            let audioPath = dialogAudioPath
+            dialogWindow = nil
+            dialogAudioPath = nil
+            if let audioPath = audioPath { dialogFinished(audioPath: audioPath) }
+        } else if window === manualWindow {
+            manualViewModel?.stopPlayback()
+            manualViewModel = nil
+            manualWindow = nil
+        }
+    }
+
+    /// The save dialog for `audioPath` is done. Only resets the state if it still
+    /// belongs to that dialog — a new call may already be recording.
+    func dialogFinished(audioPath: String) {
+        if case let .showingDialog(_, current) = state, current == audioPath {
+            state = .idle
+            updateStatusIcon()
+        }
+    }
+
+    /// Upload/NNO in flight: show ⏳ unless a call is being recorded (that state wins).
+    private func beginBackendWork() {
+        // Only from idle: a live recording or another open dialog keeps its state.
+        if case .idle = state {
+            state = .processing
+            updateStatusIcon()
+        }
+    }
+
+    private func endBackendWork() {
+        if case .processing = state {
+            state = .idle
+            updateStatusIcon()
+        }
+    }
+
+    /// Move a recording to the Trash (recoverable) instead of deleting it outright.
+    func trashRecording(_ path: String) {
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+            NSLog("CallBridge: Recording moved to Trash: %@", path)
+        } catch {
+            NSLog("CallBridge: Could not trash recording %@: %@", path, error.localizedDescription)
+        }
+    }
+
+    private static func multipartField(_ name: String, _ value: String, boundary: String) -> Data {
+        var d = Data()
+        d.append("--\(boundary)\r\n".data(using: .utf8)!)
+        d.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+        d.append("\(value)\r\n".data(using: .utf8)!)
+        return d
+    }
+
+    /// Transport error or non-2xx → a human-readable failure; nil on success.
+    private static func backendFailure(_ data: Data?, _ response: URLResponse?, _ error: Error?) -> String? {
+        if let error = error { return error.localizedDescription }
+        guard let http = response as? HTTPURLResponse else { return "geen antwoord van server" }
+        guard (200...299).contains(http.statusCode) else {
+            var detail = ""
+            if let data = data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let d = json["detail"] { detail = ": \(d)" }
+            return "server gaf \(http.statusCode)\(detail)"
+        }
+        return nil
+    }
+
+    func sendNNO(contact: ContactInfo, audioPath: String) {
+        guard let contactId = contact.id,
+              let url = URL(string: "\(serverURL)/log-nno") else { return }
+        beginBackendWork()
+
+        let boundary = UUID().uuidString
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+
+        var body = Data()
+        body.append(Self.multipartField("salesforce_id", contactId, boundary: boundary))
+        body.append(Self.multipartField("salesforce_type", contact.type, boundary: boundary))
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = body
+
+        // Strong self: this outlives the (already closed) dialog and its view model.
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            let failure = Self.backendFailure(data, response, error)
+            DispatchQueue.main.async {
+                if let failure = failure {
+                    NSLog("CallBridge: NNO error: %@", failure)
+                    self.showNotification(title: "CallBridge", message: "NNO fout: \(failure) — opname bewaard")
+                } else {
+                    NSLog("CallBridge: NNO logged successfully")
+                    // Only now: an NNO needs no audio, but keep it until the log succeeded.
+                    self.trashRecording(audioPath)
+                    self.showNotification(title: "CallBridge", message: "NNO gelogd + follow-up aangemaakt")
+                }
+                self.endBackendWork()
+            }
+        }.resume()
     }
 
     // MARK: - Utilities
@@ -1631,8 +2004,11 @@ class SaveDialogViewModel: ObservableObject {
         let task = DispatchWorkItem { [weak self] in
             self?.appDelegate?.searchContacts(query: query) { results in
                 DispatchQueue.main.async {
-                    self?.searchResults = results
-                    self?.isSearching = false
+                    // Ignore responses for an older query (or after a pick cleared it).
+                    guard let self = self,
+                          self.searchQuery.trimmingCharacters(in: .whitespaces) == query else { return }
+                    self.searchResults = results
+                    self.isSearching = false
                 }
             }
         }
@@ -1641,66 +2017,35 @@ class SaveDialogViewModel: ObservableObject {
     }
 
     func save() {
+        guard !isSending, let appDelegate = appDelegate else { return }
         isSending = true
-        appDelegate?.sendToBackend(
+        appDelegate.dialogFinished(audioPath: audioPath)
+        appDelegate.sendToBackend(
             audioPath: audioPath,
             phoneNumber: phoneNumber,
             contact: selectedContact
         )
-        appDelegate?.dismissDialog()
+        appDelegate.dismissDialog()
     }
 
     func discard() {
-        // Delete the recording
-        try? FileManager.default.removeItem(atPath: audioPath)
+        guard let appDelegate = appDelegate else { return }
+        // To the Trash, not a hard delete — recoverable if clicked by mistake.
+        appDelegate.trashRecording(audioPath)
         NSLog("CallBridge: Recording discarded: %@", audioPath)
-        appDelegate?.state = .idle
-        appDelegate?.updateStatusIcon()
-        appDelegate?.dismissDialog()
+        appDelegate.dialogFinished(audioPath: audioPath)
+        appDelegate.dismissDialog()
     }
 
     func logNNO() {
-        guard let contact = selectedContact, let contactId = contact.id else { return }
-
+        guard !isSending, let contact = selectedContact, contact.id != nil,
+              let appDelegate = appDelegate else { return }
         isSending = true
-
-        // Delete the recording — no need to process audio for NNO
-        try? FileManager.default.removeItem(atPath: audioPath)
-
-        guard let url = URL(string: "\(appDelegate?.serverURL ?? "http://localhost:8765")/log-nno") else { return }
-
-        let boundary = UUID().uuidString
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 15
-
-        var body = Data()
-        func addField(_ name: String, _ value: String) {
-            body.append("--\(boundary)\r\n".data(using: .utf8)!)
-            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
-            body.append("\(value)\r\n".data(using: .utf8)!)
-        }
-        addField("salesforce_id", contactId)
-        addField("salesforce_type", contact.type)
-        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
-        request.httpBody = body
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            DispatchQueue.main.async {
-                if let error = error {
-                    NSLog("CallBridge: NNO error: %@", error.localizedDescription)
-                    self?.appDelegate?.showNotification(title: "CallBridge", message: "NNO fout: \(error.localizedDescription)")
-                } else {
-                    NSLog("CallBridge: NNO logged successfully")
-                    self?.appDelegate?.showNotification(title: "CallBridge", message: "NNO gelogd + follow-up aangemaakt")
-                }
-                self?.appDelegate?.state = .idle
-                self?.appDelegate?.updateStatusIcon()
-            }
-        }.resume()
-
-        appDelegate?.dismissDialog()
+        appDelegate.dialogFinished(audioPath: audioPath)
+        // The request lives in AppDelegate: this view model is freed as soon as the
+        // dialog closes, which silently dropped the NNO result (and state reset).
+        appDelegate.sendNNO(contact: contact, audioPath: audioPath)
+        appDelegate.dismissDialog()
     }
 }
 
@@ -1813,10 +2158,11 @@ struct SaveRecordingView: View {
 
             // Buttons
             HStack {
+                // No Esc shortcut: Esc in the search field used to discard the recording.
                 Button("Niet opslaan") {
                     viewModel.discard()
                 }
-                .keyboardShortcut(.escape)
+                .disabled(viewModel.isSending)
 
                 Button("NNO") {
                     viewModel.logNNO()
@@ -1957,8 +2303,11 @@ class ManualProcessViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
         let task = DispatchWorkItem { [weak self] in
             self?.appDelegate?.searchContacts(query: query) { results in
                 DispatchQueue.main.async {
-                    self?.searchResults = results
-                    self?.isSearching = false
+                    // Ignore responses for an older query (or after a pick cleared it).
+                    guard let self = self,
+                          self.searchQuery.trimmingCharacters(in: .whitespaces) == query else { return }
+                    self.searchResults = results
+                    self.isSearching = false
                 }
             }
         }
@@ -1967,7 +2316,7 @@ class ManualProcessViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
     }
 
     func process() {
-        guard selectedContact != nil else { return }
+        guard !isSending, selectedContact?.id != nil else { return }
         isSending = true
         stopPlayback()
         appDelegate?.sendToBackend(
@@ -1975,12 +2324,12 @@ class ManualProcessViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
             phoneNumber: selectedContact?.phone ?? "",
             contact: selectedContact
         )
-        appDelegate?.dismissDialog()
+        appDelegate?.dismissManualWindow()
     }
 
     func cancel() {
         stopPlayback()
-        appDelegate?.dismissDialog()
+        appDelegate?.dismissManualWindow()
     }
 }
 

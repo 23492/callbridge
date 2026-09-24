@@ -1,9 +1,16 @@
+import datetime
+import json
 import time
 import requests
 import logging
 from config import GEMINI_API_KEY, GEMINI_MODEL
 
 logger = logging.getLogger(__name__)
+
+GEMINI_TIMEOUT = (10, 180)  # (connect, read) seconds — thinking mode can be slow
+MAX_RETRIES = 5
+RETRY_STATUS_CODES = (500, 502, 503, 504)
+MAX_RETRY_AFTER = 120  # seconds; cap on a server-supplied Retry-After
 
 SUMMARY_PROMPT = """<role>
 
@@ -39,7 +46,7 @@ Je bent een Salesforce-notitie samenvattingsspecialist bij Welisa. Je bent analy
 
    - Controleer of alle data feitelijk is (geen hallucinaties of meningen).
 
-   - Verifieer of deadlines het formaat DD-MM hebben.
+   - Verifieer of deadlines het formaat DD-MM-YYYY hebben.
 
    - Check of lege secties de tekst "Niet besproken" bevatten.
 
@@ -91,7 +98,7 @@ Zoek tijdens stap 1 & 2 actief naar:
 
 - **Handling Blanks**: Als informatie voor een sectie ontbreekt, noteer exact: "Niet besproken".
 
-- **Formatting**: Deadlines altijd als DD-MM. Geen introductie of afsluitende tekst buiten het sjabloon.
+- **Formatting**: Deadlines altijd als DD-MM-YYYY (inclusief jaar). Geen introductie of afsluitende tekst buiten het sjabloon.
 
 </constraints>
 
@@ -101,9 +108,9 @@ Zoek tijdens stap 1 & 2 actief naar:
 
 ACTIEPUNTEN
 
-- [Actiepunt 1 voor ons, incl. deadline, bv: Voorstel sturen voor EOD DD-MM]
+- [Actiepunt 1 voor ons, incl. deadline, bv: Voorstel sturen voor EOD DD-MM-YYYY]
 
-- [Actiepunt 2 voor de klant, incl. deadline, bv: Klant stuurt huidige contract door voor DD-MM]
+- [Actiepunt 2 voor de klant, incl. deadline, bv: Klant stuurt huidige contract door voor DD-MM-YYYY]
 
 
 
@@ -194,7 +201,7 @@ def generate_summary(transcript: str) -> str:
     payload = {
         "contents": [{
             "parts": [{
-                "text": f"{SUMMARY_PROMPT}\n\nDe datum van vandaag is: {__import__('datetime').date.today().isoformat()}\n\n<transcript>\n{transcript}\n</transcript>"
+                "text": f"{SUMMARY_PROMPT}\n\nDe datum van vandaag is: {datetime.date.today().isoformat()}\n\n<transcript>\n{transcript}\n</transcript>"
             }]
         }],
         "generationConfig": {
@@ -204,34 +211,11 @@ def generate_summary(transcript: str) -> str:
         }
     }
 
-    # Retry up to 5 times with exponential backoff on server errors
-    max_retries = 5
-    for attempt in range(max_retries):
-        response = requests.post(
-            url,
-            json=payload,
-            headers={"x-goog-api-key": GEMINI_API_KEY},
-        )
+    data = _post_gemini(url, payload, "summary")
+    text = _extract_text(data)
 
-        if response.status_code in (500, 502, 503, 429) and attempt < max_retries - 1:
-            wait = 2 ** attempt * 5  # 5s, 10s, 20s, 40s
-            logger.warning("Gemini returned %s, retrying in %ds (attempt %d/%d)...", response.status_code, wait, attempt + 1, max_retries)
-            time.sleep(wait)
-            continue
-
-        response.raise_for_status()
-        data = response.json()
-
-        # With thinking enabled, response may contain thought parts.
-        # Extract only the non-thought (answer) parts.
-        parts = data["candidates"][0]["content"]["parts"]
-        answer_parts = [p["text"] for p in parts if not p.get("thought")]
-        text = "\n".join(answer_parts)
-
-        logger.info("Summary generated (%d chars)", len(text))
-        return text
-
-    raise Exception("Gemini API failed after retry")
+    logger.info("Summary generated (%d chars)", len(text))
+    return text
 
 
 ACTION_EXTRACT_PROMPT = """<instructions>
@@ -252,7 +236,7 @@ GEEN actiepunt (negeer deze volledig):
 
 Voor elk actiepunt:
 - "description": Korte, concrete beschrijving van wat er gedaan moet worden
-- "due_date": Deadline als YYYY-MM-DD (gebruik het huidige jaar tenzij anders vermeld). null als geen deadline.
+- "due_date": Deadline als YYYY-MM-DD. Ontbreekt het jaar, kies dan de eerstvolgende datum op of na vandaag (bijv. "15-01" genoemd in december = januari volgend jaar). null als geen deadline.
 - "is_follow_up_call": true als het een follow-up call/gesprek betreft, anders false
 
 Geef ALLEEN valide JSON terug, geen andere tekst. Voorbeeld:
@@ -268,16 +252,15 @@ Bij twijfel: NIET opnemen. Liever te weinig dan te veel taken. Lege array als er
 def extract_action_items(summary: str) -> list[dict]:
     """
     Extract structured action items from a summary using Gemini.
-    Returns a list of action item dicts.
+    Returns a list of validated action item dicts:
+    {description: str, due_date: "YYYY-MM-DD" | None, is_follow_up_call: bool}
     """
-    import json
-
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
         f"{GEMINI_MODEL}:generateContent"
     )
 
-    today = __import__("datetime").date.today().isoformat()
+    today = datetime.date.today().isoformat()
     payload = {
         "contents": [{
             "parts": [{
@@ -289,27 +272,131 @@ def extract_action_items(summary: str) -> list[dict]:
         }
     }
 
-    # Retry up to 5 times with exponential backoff on server errors
-    max_retries = 5
-    for attempt in range(max_retries):
-        response = requests.post(
-            url,
-            json=payload,
-            headers={"x-goog-api-key": GEMINI_API_KEY},
-        )
+    data = _post_gemini(url, payload, "action extraction")
+    text = _extract_text(data)
 
-        if response.status_code in (500, 502, 503, 429) and attempt < max_retries - 1:
-            wait = 2 ** attempt * 5
-            logger.warning("Gemini returned %s on action extraction, retrying in %ds (attempt %d/%d)...", response.status_code, wait, attempt + 1, max_retries)
+    parsed = json.loads(text)
+    # Tolerate a wrapper object such as {"actions": [...]}
+    if isinstance(parsed, dict):
+        parsed = next((v for v in parsed.values() if isinstance(v, list)), None)
+    if not isinstance(parsed, list):
+        logger.warning("Action extraction returned no list, ignoring: %.200s", text)
+        return []
+
+    actions = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        description = item.get("description")
+        if not isinstance(description, str) or not description.strip():
+            continue
+        actions.append({
+            "description": description.strip(),
+            "due_date": _normalize_due_date(item.get("due_date")),
+            "is_follow_up_call": item.get("is_follow_up_call") is True,
+        })
+
+    logger.info("Extracted %d action items", len(actions))
+    return actions
+
+
+def _normalize_due_date(value) -> str | None:
+    """
+    Validate a YYYY-MM-DD due date. Invalid → None.
+    Past dates: more than 30 days ago is treated as a missed year rollover
+    (e.g. "15-01" mentioned in December) and moved to the first matching
+    date on or after today; up to 30 days ago → None.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        due = datetime.date.fromisoformat(value.strip())
+    except ValueError:
+        logger.warning("Ignoring invalid due_date: %r", value)
+        return None
+
+    today = datetime.date.today()
+    if due >= today:
+        return due.isoformat()
+
+    if (today - due).days <= 30:
+        logger.warning("Ignoring due_date in the recent past: %s", due)
+        return None
+
+    try:
+        bumped = due.replace(year=today.year)
+        if bumped < today:
+            bumped = due.replace(year=today.year + 1)
+    except ValueError:  # 29-02 in a non-leap year
+        logger.warning("Ignoring due_date that cannot roll over: %s", due)
+        return None
+    logger.info("Rolled past due_date %s forward to %s", due, bumped)
+    return bumped.isoformat()
+
+
+def _post_gemini(url: str, payload: dict, label: str) -> dict:
+    """
+    POST to Gemini with retries on transient failures (5xx, connection
+    errors, timeouts, per-minute 429). Stops immediately on a daily quota
+    429. Returns the parsed JSON response.
+    """
+    for attempt in range(MAX_RETRIES):
+        last_attempt = attempt == MAX_RETRIES - 1
+        wait = 2 ** attempt * 5  # 5s, 10s, 20s, 40s
+
+        try:
+            response = requests.post(
+                url,
+                json=payload,
+                headers={"x-goog-api-key": GEMINI_API_KEY},
+                timeout=GEMINI_TIMEOUT,
+            )
+        except (requests.ConnectionError, requests.Timeout) as e:
+            if last_attempt:
+                raise
+            logger.warning("Gemini %s request failed (%s), retrying in %ds (attempt %d/%d)...", label, e, wait, attempt + 1, MAX_RETRIES)
             time.sleep(wait)
             continue
 
+        if response.status_code == 429:
+            body = response.text or ""
+            lowered = body.lower()
+            if "resource_exhausted" in lowered and ("per day" in lowered or "perday" in lowered):
+                logger.error("Gemini daily quota exhausted during %s: %.300s", label, body)
+                raise RuntimeError("Gemini dagelijkse quota is op — probeer het morgen opnieuw.")
+            retry_after = response.headers.get("Retry-After", "")
+            if retry_after.strip().isdigit():
+                wait = min(int(retry_after.strip()), MAX_RETRY_AFTER)
+
+        if (response.status_code == 429 or response.status_code in RETRY_STATUS_CODES) and not last_attempt:
+            logger.warning("Gemini returned %s on %s, retrying in %ds (attempt %d/%d)...", response.status_code, label, wait, attempt + 1, MAX_RETRIES)
+            time.sleep(wait)
+            continue
+
+        # On the final attempt a retryable status falls through to here and
+        # raise_for_status() raises, so the loop never exits without a result.
         response.raise_for_status()
-        data = response.json()
+        return response.json()
 
-        parts = data["candidates"][0]["content"]["parts"]
-        text = parts[0]["text"]
 
-        actions = json.loads(text)
-        logger.info("Extracted %d action items", len(actions))
-        return actions
+def _extract_text(data: dict) -> str:
+    """
+    Join the non-thought text parts of the first candidate.
+    Raises RuntimeError if Gemini returned no usable text (e.g. blocked).
+    """
+    candidates = data.get("candidates") or []
+    if not candidates:
+        block_reason = (data.get("promptFeedback") or {}).get("blockReason", "unknown")
+        raise RuntimeError(f"Gemini gaf geen antwoord (geen candidates, blockReason: {block_reason})")
+
+    candidate = candidates[0]
+    parts = (candidate.get("content") or {}).get("parts") or []
+    # With thinking enabled, response may contain thought parts; skip them.
+    text = "\n".join(
+        p.get("text", "") for p in parts
+        if isinstance(p, dict) and not p.get("thought") and p.get("text")
+    )
+    if not text.strip():
+        finish_reason = candidate.get("finishReason", "unknown")
+        raise RuntimeError(f"Gemini gaf een leeg antwoord (finishReason: {finish_reason})")
+    return text

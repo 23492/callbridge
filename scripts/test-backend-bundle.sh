@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Integration test for callbridge-server PyInstaller bundle (Phase 2, Plan 03)
 # Tests: /health (200), /contact-search (reachable; valid JSON w/ creds), /process (accepted, status=processing)
-# sf-prod-gate: pipeline is killed before Salesforce step completes — no production writes
+# sf-prod-gate: backend runs with all credentials stripped and the pipeline is killed
+#   before the Salesforce step completes — no production writes
 
 set -e
 
@@ -74,24 +75,34 @@ fi
 echo "Binary found: $BINARY_PATH"
 pass "binary exists at Contents/Resources/callbridge-server/callbridge-server"
 
-# Step 4: Set up Application Support directory and .env
+# Step 4: Pre-flight — port 8765 must be free, otherwise the health check
+# would hit an already-running (possibly production) backend instead of ours.
 echo ""
-echo "--- Step 4: Configure Application Support ---"
-mkdir -p "$SUPPORT_DIR"
-if [ -f "$PROJECT_ROOT/.env" ]; then
-    cp "$PROJECT_ROOT/.env" "$SUPPORT_DIR/.env"
-    echo ".env copied to $SUPPORT_DIR"
-else
-    echo "WARNING: No .env found at project root — backend will start without credentials."
-    echo "  /contact-search will return an error JSON (acceptable for Phase 2 shape test)."
-    echo "  /process will start a job but pipeline will fail at transcription step."
+echo "--- Step 4: Check port 8765 is free ---"
+EXISTING_PIDS="$(lsof -nP -iTCP:8765 -sTCP:LISTEN -t 2>/dev/null || true)"
+if [ -n "$EXISTING_PIDS" ]; then
+    echo "ERROR: Something is already listening on :8765 (PID(s): $(echo $EXISTING_PIDS))."
+    echo "  Stop the running CallBridge backend first, e.g.:"
+    echo "    launchctl unload ~/Library/LaunchAgents/com.welisa.callbridge-server.plist"
+    exit 1
+fi
+echo "Port 8765 is free."
+# The backend no longer reads .env; remove a copy left behind by older
+# versions of this script so no secrets linger in Application Support.
+if [ -f "$SUPPORT_DIR/.env" ] && [ -f "$PROJECT_ROOT/.env" ] && cmp -s "$PROJECT_ROOT/.env" "$SUPPORT_DIR/.env"; then
+    rm -f "$SUPPORT_DIR/.env"
+    echo "Removed stale .env copy from $SUPPORT_DIR"
 fi
 
-# Step 5: Launch binary
+# Step 5: Launch binary with all credentials stripped from the environment,
+# so the test can never reach AssemblyAI, Gemini, or the Salesforce prod org.
 echo ""
-echo "--- Step 5: Launch binary ---"
+echo "--- Step 5: Launch binary (credentials stripped) ---"
+mkdir -p "$SUPPORT_DIR"
 cd "$SUPPORT_DIR"
-"$BINARY_PATH" > /tmp/callbridge-test-stdout.log 2>&1 &
+env -u ASSEMBLYAI_API_KEY -u GEMINI_API_KEY \
+    -u SF_USERNAME -u SF_PASSWORD -u SF_SECURITY_TOKEN -u SF_DOMAIN \
+    "$BINARY_PATH" > /tmp/callbridge-test-stdout.log 2>&1 &
 BACKEND_PID=$!
 cd "$PROJECT_ROOT"
 echo "Backend launched (PID $BACKEND_PID)"
@@ -112,8 +123,12 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-if $HEALTH_OK; then
-    pass "/health returned 200"
+if $HEALTH_OK && kill -0 "$BACKEND_PID" 2>/dev/null; then
+    pass "/health returned 200 from the launched backend (PID $BACKEND_PID alive)"
+elif $HEALTH_OK; then
+    fail "/health returned 200 but launched backend (PID $BACKEND_PID) is not running — another process answered"
+    tail -20 /tmp/callbridge-test-stdout.log || true
+    exit 1
 else
     fail "/health did not respond within 30s (last code: $HTTP_CODE)"
     echo "Backend stdout/stderr:"
@@ -135,7 +150,7 @@ elif [ "$SEARCH_CODE" = "200" ]; then
         fail "/contact-search 200 but not valid JSON: $SEARCH_BODY"
     fi
 else
-    pass "/contact-search reachable (HTTP $SEARCH_CODE — Salesforce auth needed for full result; expected without .env)"
+    pass "/contact-search reachable (HTTP $SEARCH_CODE — expected: test backend runs without Salesforce credentials)"
 fi
 
 # Step 8: /process — returns job_id

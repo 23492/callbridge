@@ -7,6 +7,12 @@ logger = logging.getLogger(__name__)
 
 ASSEMBLY_URL = "https://api.assemblyai.com/v2"
 
+UPLOAD_TIMEOUT = (10, 300)  # (connect, read) seconds — large audio uploads
+REQUEST_TIMEOUT = (10, 30)
+POLL_INTERVAL = 3
+MIN_POLL_DEADLINE = 900  # seconds; extended to 3x audio length once known
+MAX_POLL_FAILURES = 3  # consecutive transient failures before giving up
+
 
 def transcribe_audio(file_path: str) -> dict:
     """
@@ -27,6 +33,7 @@ def transcribe_audio(file_path: str) -> dict:
             f"{ASSEMBLY_URL}/upload",
             headers=headers,
             data=f,
+            timeout=UPLOAD_TIMEOUT,
         )
     upload_res.raise_for_status()
     upload_url = upload_res.json()["upload_url"]
@@ -40,27 +47,64 @@ def transcribe_audio(file_path: str) -> dict:
             "audio_url": upload_url,
             "speaker_labels": True,
             "language_detection": True,
+            "language_detection_options": {
+                "expected_languages": ["nl", "en"],
+            },
         },
+        timeout=REQUEST_TIMEOUT,
     )
     transcript_res.raise_for_status()
     transcript_id = transcript_res.json()["id"]
 
-    # Phase 3: Poll until transcription completes
+    # Phase 3: Poll until transcription completes (bounded by a deadline)
+    start = time.monotonic()
+    deadline_seconds = MIN_POLL_DEADLINE
+    failures = 0
     while True:
-        poll_res = requests.get(
-            f"{ASSEMBLY_URL}/transcript/{transcript_id}",
-            headers=headers,
-        )
+        if time.monotonic() - start > deadline_seconds:
+            raise RuntimeError(
+                f"AssemblyAI transcription {transcript_id} timed out after "
+                f"{int(deadline_seconds)}s"
+            )
+
+        try:
+            poll_res = requests.get(
+                f"{ASSEMBLY_URL}/transcript/{transcript_id}",
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+            )
+        except (requests.ConnectionError, requests.Timeout) as e:
+            failures += 1
+            if failures >= MAX_POLL_FAILURES:
+                raise
+            logger.warning("AssemblyAI poll failed (%s), retrying (%d/%d)...", e, failures, MAX_POLL_FAILURES)
+            time.sleep(POLL_INTERVAL * failures)
+            continue
+
+        if poll_res.status_code >= 500:
+            failures += 1
+            if failures >= MAX_POLL_FAILURES:
+                poll_res.raise_for_status()
+            logger.warning("AssemblyAI poll returned %s, retrying (%d/%d)...", poll_res.status_code, failures, MAX_POLL_FAILURES)
+            time.sleep(POLL_INTERVAL * failures)
+            continue
+
         poll_res.raise_for_status()
+        failures = 0
         data = poll_res.json()
 
         if data["status"] == "completed":
             logger.info("Transcription completed (language: %s)", data.get("language_code"))
             return _format_transcript(data)
         if data["status"] == "error":
-            raise Exception(f"AssemblyAI error: {data.get('error', 'unknown')}")
+            raise RuntimeError(f"AssemblyAI error: {data.get('error', 'unknown')}")
 
-        time.sleep(3)
+        # Once AssemblyAI reports the audio length, allow up to 3x that.
+        duration = data.get("audio_duration")
+        if duration:
+            deadline_seconds = max(MIN_POLL_DEADLINE, 3 * duration)
+
+        time.sleep(POLL_INTERVAL)
 
 
 def _format_transcript(data: dict) -> dict:
