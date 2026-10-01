@@ -91,13 +91,15 @@ Prototype rule (`docs/beta/nno-prototype.js`), in order:
 
 Result:
 
-| | Salesforce says NNO | Salesforce says call | No matching Task |
-|---|---|---|---|
-| Detector: NNO | 14 | 0 | 4 |
-| Detector: conversation | 0 | 2 | 3 |
-| Detector: unsure | 0 | 0 | 0 |
+| | Salesforce: NNO Task | Salesforce: call, duration matches | Conversation, inferred (no exact Task) | No matching Task |
+|---|---|---|---|---|
+| Detector: NNO | 14 | 0 | 0 | 3 |
+| Detector: conversation | 0 | 2 | 2 | 1 |
+| Detector: unsure | 0 | 0 | 0 | 0 |
 
-16 of 16 labelled recordings correct, no false NNO. The set is far too small for the precision targets, and mono recordings can only be judged on duration. Next: more recordings, especially short answered calls ("bel je later terug") and mono files.
+The two inferred conversations: `20260924 1522` (54 s, own speech in 9 stretches) and `20260928 1137` (97 s, right after the NNO at 11:36 for the same contact).
+
+All 16 Salesforce-confirmed recordings correct (14 NNO, 2 calls), no false NNO. The set is far too small for the precision targets, and mono recordings can only be judged on duration. Next: more recordings, especially short answered calls ("bel je later terug") and mono files.
 
 ### Phase 2: detector core
 
