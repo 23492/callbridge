@@ -7,9 +7,9 @@ import Security
 
 // MARK: - Version & Update Config
 
-let appVersion = "2.0.8"
+let appVersion = "2.1.0-beta.0"
 /// Release channel this binary was built for ("stable" or "beta"); set by build-release.sh.
-let appBuildChannel = "stable"
+let appBuildChannel = "beta"
 let updatePublicKey = "ylneUBx4bMQxiX9rsDkKtya1InBHUzlbfsEOwpvFA2E="
 
 // MARK: - Debug Logging
