@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version (semver, e.g. 2.0.1)"
+        description: "Version: 2.0.1 from main (stable) or 2.1.0-beta.1 from beta"
         required: true
 
 permissions:
@@ -19,15 +19,18 @@ concurrency: release
 
 jobs:
   release:
-    if: github.ref == 'refs/heads/main'
+    # Stable releases only from main, beta releases only from beta.
+    if: >-
+      (github.ref == 'refs/heads/main' && !contains(inputs.version, '-beta.')) ||
+      (github.ref == 'refs/heads/beta' && contains(inputs.version, '-beta.'))
     runs-on: macos-latest
     env:
       VERSION: ${{ inputs.version }}
     steps:
       - name: Validate version
         run: |
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Invalid version '$VERSION' (expected MAJOR.MINOR.PATCH, e.g. 2.0.1)"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
+            echo "::error::Invalid version '$VERSION' (expected 2.0.1 or 2.1.0-beta.1)"
             exit 1
           fi
 
@@ -60,8 +63,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          PRERELEASE=""
+          if [[ "$VERSION" == *-beta.* ]]; then PRERELEASE="--prerelease"; fi
           gh release create "v$VERSION" CallBridge.app.zip "audio-hijack/Voice Chat.ah4session" \
-            --target "$RELEASE_SHA" \
+            --target "$RELEASE_SHA" $PRERELEASE \
             --title "CallBridge v$VERSION" \
             --notes "Automated build. Install manually via gh release download; auto-update is disabled on this private repo. Includes the Audio Hijack Voice Chat session template (import it into Audio Hijack on each Mac)."
 

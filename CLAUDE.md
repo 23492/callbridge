@@ -71,6 +71,17 @@ git add -A && git commit -m "Release v1.2.0" && git push
 gh release create v1.2.0 CallBridge.app.zip --title "v1.2.0" --notes "..."
 ```
 
+### Beta channel
+
+Two release channels, each with its own manifest:
+
+- **stable**: `callbridge-update.json` on `main`, versions like `2.0.9`
+- **beta**: `callbridge-update.json` on `beta`, versions like `2.1.0-beta.1` (GitHub pre-release)
+
+Users switch in Instellingen → Updates → "Bètaversies ontvangen" (stored in UserDefaults key `updateChannel`; default follows the build's `appBuildChannel`). Beta users also get a stable release once it is newer than the newest beta. Switching back to stable offers "↩ Terug naar stabiel" even when that is an older version.
+
+Release a beta: run the Release workflow on the `beta` branch with a `-beta.N` version. Promote: merge `beta` into `main`, then release the final version from `main`. The channel rules are tested by `scripts/test-update-channel.sh`.
+
 Key files:
 
 - `callbridge-update.json` — version manifest (committed to repo, fetched by running instances)

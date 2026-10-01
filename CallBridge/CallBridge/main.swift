@@ -8,7 +8,8 @@ import Security
 // MARK: - Version & Update Config
 
 let appVersion = "2.0.8"
-let updateManifestURL = "https://raw.githubusercontent.com/23492/callbridge/main/callbridge-update.json"
+/// Release channel this binary was built for ("stable" or "beta"); set by build-release.sh.
+let appBuildChannel = "stable"
 let updatePublicKey = "ylneUBx4bMQxiX9rsDkKtya1InBHUzlbfsEOwpvFA2E="
 
 // MARK: - Debug Logging
@@ -136,6 +137,99 @@ struct StatusResponse: Codable {
     let completed: [CompletedJob]
 }
 
+// MARK: - Update Channel
+
+/// Which manifest the updater follows. Stable reads callbridge-update.json on main,
+/// beta reads the copy on the beta branch. Stored per user in UserDefaults.
+enum UpdateChannel: String {
+    case stable
+    case beta
+
+    static let defaultsKey = "updateChannel"
+
+    static var current: UpdateChannel {
+        // No stored choice yet: follow the build itself, so a manually installed beta
+        // is not immediately offered a downgrade to stable.
+        get {
+            UpdateChannel(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "")
+                ?? UpdateChannel(rawValue: appBuildChannel) ?? .stable
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
+    }
+
+    var branch: String { self == .stable ? "main" : "beta" }
+
+    var manifestURL: String {
+        "https://raw.githubusercontent.com/23492/callbridge/\(branch)/callbridge-update.json"
+    }
+}
+
+/// Semver subset used for releases: MAJOR.MINOR.PATCH with an optional "-beta.N".
+/// A beta sorts below its final release (2.1.0-beta.3 < 2.1.0).
+struct AppVersion: Comparable, Equatable {
+    let core: [Int]
+    let beta: Int?
+
+    init?(_ string: String) {
+        let parts = string.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        guard let first = parts.first, !first.isEmpty else { return nil }
+        let nums = first.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
+        guard nums.count == 3, nums.allSatisfy({ $0 != nil && $0! >= 0 }) else { return nil }
+        core = nums.map { $0! }
+        if parts.count == 2 {
+            let pre = parts[1].split(separator: ".", omittingEmptySubsequences: false)
+            guard pre.count == 2, pre[0] == "beta", let n = Int(pre[1]), n >= 0 else { return nil }
+            beta = n
+        } else {
+            beta = nil
+        }
+    }
+
+    var isBeta: Bool { beta != nil }
+
+    static func < (lhs: AppVersion, rhs: AppVersion) -> Bool {
+        if lhs.core != rhs.core { return lhs.core.lexicographicallyPrecedes(rhs.core) }
+        switch (lhs.beta, rhs.beta) {
+        case let (l?, r?): return l < r
+        case (_?, nil): return true
+        default: return false
+        }
+    }
+}
+
+/// What the updater should offer, given the installed build and the manifests it fetched.
+/// Pure function so the channel rules are testable without networking or Cocoa.
+enum UpdateDecision: Equatable {
+    case none
+    case upgrade(String)
+    /// Leaving the beta channel: go back to the stable build, even if it is older.
+    case returnToStable(String)
+}
+
+func decideUpdate(installed: String, buildChannel: String, selected: UpdateChannel,
+                  stableManifest: String?, betaManifest: String?) -> UpdateDecision {
+    guard let local = AppVersion(installed) else { return .none }
+    // Stable never follows a beta version, even if one leaks into main's manifest.
+    let stable = stableManifest.flatMap(AppVersion.init).flatMap { $0.isBeta ? nil : $0 }
+    let beta = betaManifest.flatMap(AppVersion.init)
+
+    switch selected {
+    case .stable:
+        guard let remote = stable else { return .none }
+        if remote > local { return .upgrade(stableManifest!) }
+        if buildChannel == UpdateChannel.beta.rawValue && remote != local {
+            return .returnToStable(stableManifest!)
+        }
+        return .none
+    case .beta:
+        // Beta testers also get a stable release once it overtakes the newest beta.
+        let candidates = [(beta, betaManifest), (stable, stableManifest)]
+            .compactMap { v, s -> (AppVersion, String)? in v.map { ($0, s!) } }
+        guard let best = candidates.max(by: { $0.0 < $1.0 }), best.0 > local else { return .none }
+        return .upgrade(best.1)
+    }
+}
+
 // MARK: - Update Manifest
 
 struct UpdateManifest: Codable {
@@ -152,38 +246,61 @@ class UpdateChecker {
     var availableManifest: UpdateManifest?
     var isUpdating = false
 
+    /// True when the offered update leaves the beta channel for an older stable build.
+    var isReturnToStable = false
+
     func checkForUpdate(notify: Bool = false, callback: (() -> Void)? = nil) {
-        guard let url = URL(string: updateManifestURL) else { return }
+        let selected = UpdateChannel.current
+        // Beta also needs the stable manifest: a stable release can overtake the newest beta.
+        let channels: [UpdateChannel] = [.stable, .beta]
+        var manifests: [UpdateChannel: UpdateManifest] = [:]
+        let lock = NSLock()
+        let group = DispatchGroup()
 
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 10
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
-            guard let self = self, let data = data, error == nil,
-                  let manifest = try? JSONDecoder().decode(UpdateManifest.self, from: data) else {
-                debugLog("UpdateChecker: Failed to fetch manifest: \(error?.localizedDescription ?? "decode error")")
-                return
-            }
-
-            let comparison = manifest.version.compare(appVersion, options: .numeric)
-            if comparison == .orderedDescending {
-                debugLog("UpdateChecker: Update available: \(manifest.version) (current: \(appVersion))")
-                DispatchQueue.main.async {
-                    self.availableVersion = manifest.version
-                    self.availableManifest = manifest
-                    callback?()
+        for channel in channels {
+            guard let url = URL(string: channel.manifestURL) else { continue }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 10
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            group.enter()
+            URLSession.shared.dataTask(with: request) { data, _, error in
+                defer { group.leave() }
+                guard let data = data, error == nil,
+                      let manifest = try? JSONDecoder().decode(UpdateManifest.self, from: data) else {
+                    debugLog("UpdateChecker: Failed to fetch \(channel.rawValue) manifest: \(error?.localizedDescription ?? "decode error")")
+                    return
                 }
-            } else {
-                debugLog("UpdateChecker: Up to date (\(appVersion))")
+                lock.lock(); manifests[channel] = manifest; lock.unlock()
+            }.resume()
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            guard let self = self else { return }
+            let decision = decideUpdate(
+                installed: appVersion,
+                buildChannel: appBuildChannel,
+                selected: selected,
+                stableManifest: manifests[.stable]?.version,
+                betaManifest: selected == .beta ? manifests[.beta]?.version : nil
+            )
+            debugLog("UpdateChecker: channel=\(selected.rawValue) installed=\(appVersion) (\(appBuildChannel)) decision=\(decision)")
+
+            switch decision {
+            case .upgrade(let version), .returnToStable(let version):
+                let manifest = [manifests[.beta], manifests[.stable]].compactMap { $0 }.first { $0.version == version }
+                self.availableVersion = version
+                self.availableManifest = manifest
+                if case .returnToStable = decision { self.isReturnToStable = true } else { self.isReturnToStable = false }
+            case .none:
+                self.availableVersion = nil
+                self.availableManifest = nil
+                self.isReturnToStable = false
                 if notify {
-                    DispatchQueue.main.async {
-                        self.showNotification(title: "CallBridge", message: "Je hebt de nieuwste versie (v\(appVersion))")
-                    }
+                    self.showNotification(title: "CallBridge", message: "Je hebt de nieuwste versie (v\(appVersion), kanaal \(selected.rawValue))")
                 }
-                DispatchQueue.main.async { callback?() }
             }
-        }.resume()
+            callback?()
+        }
     }
 
     func downloadAndApply() {
@@ -743,6 +860,19 @@ enum CallState {
 
 class SettingsViewModel: ObservableObject {
     var onComplete: (() -> Void)?
+    /// Called right after the update channel changes, so the app can re-check for updates.
+    var onChannelChange: ((UpdateChannel) -> Void)?
+
+    /// Saved immediately on toggle, independent of the credential "Opslaan" button.
+    @Published var betaChannel: Bool = UpdateChannel.current == .beta {
+        didSet {
+            guard betaChannel != oldValue else { return }
+            let channel: UpdateChannel = betaChannel ? .beta : .stable
+            UpdateChannel.current = channel
+            debugLog("Settings: update channel set to \(channel.rawValue)")
+            onChannelChange?(channel)
+        }
+    }
 
     @Published var assemblyAIKey: String = ""
     @Published var geminiKey: String = ""
@@ -856,6 +986,17 @@ struct SettingsView: View {
                 Section("Salesforce domein") {
                     TextField("Domein (bijv. welisa)", text: $viewModel.sfDomain)
                 }
+                Section("Updates") {
+                    Toggle("Bètaversies ontvangen", isOn: $viewModel.betaChannel)
+                    Text(viewModel.betaChannel
+                         ? "Je krijgt testversies met nieuwe functies vóór collega's. Zet uit om terug te gaan naar de stabiele versie."
+                         : "Je krijgt alleen stabiele versies.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("Geïnstalleerd: v\(appVersion)\(appBuildChannel == "beta" ? " (bèta)" : "")")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
             .formStyle(.grouped)
 
@@ -887,7 +1028,7 @@ struct SettingsView: View {
             }
             .padding()
         }
-        .frame(width: 480, height: 580)
+        .frame(width: 480, height: 700)
         .padding(.bottom)
     }
 }
@@ -1187,7 +1328,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         debugLog("rebuildMenu — reachable: \(serverReachable), processing: \(lastStatus?.processing.count ?? -1), completed: \(lastStatus?.completed.count ?? -1)")
 
         // Header
-        let header = NSMenuItem(title: "CallBridge v\(appVersion)", action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: "CallBridge v\(appVersion)\(UpdateChannel.current == .beta ? " · bèta" : "")", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(NSMenuItem.separator())
@@ -1273,7 +1414,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
         // Update section (the check only offers an update; installing is a click)
         if let version = updateChecker.availableVersion {
-            let updateItem = NSMenuItem(title: "⬆ Update naar v\(version)", action: #selector(installUpdate), keyEquivalent: "")
+            let title = updateChecker.isReturnToStable ? "↩ Terug naar stabiel v\(version)" : "⬆ Update naar v\(version)"
+            let updateItem = NSMenuItem(title: title, action: #selector(installUpdate), keyEquivalent: "")
             updateItem.target = self
             menu.addItem(updateItem)
         } else {
@@ -1299,6 +1441,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                                                  "SF_SECURITY_TOKEN", "SF_DOMAIN"]) {
                 self.pendingBackendStart = false
                 self.backendSupervisor.reloadCredentials()
+            }
+        }
+        viewModel.onChannelChange = { [weak self] channel in
+            guard let self = self else { return }
+            self.updateChecker.checkForUpdate { [weak self] in
+                guard let self = self else { return }
+                self.rebuildMenu()
+                if let version = self.updateChecker.availableVersion {
+                    let what = self.updateChecker.isReturnToStable ? "Terug naar stabiel: v\(version)" : "Update beschikbaar: v\(version)"
+                    self.showNotification(title: "CallBridge", message: "\(what) — installeer via het menu")
+                } else {
+                    self.showNotification(title: "CallBridge", message: "Kanaal: \(channel == .beta ? "bèta" : "stabiel"), geen update nodig")
+                }
             }
         }
         let hostingController = NSHostingController(rootView: SettingsView(viewModel: viewModel))

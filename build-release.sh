@@ -4,13 +4,23 @@ set -e
 VERSION=$1
 if [ -z "$VERSION" ]; then
     echo "Usage: ./build-release.sh <version>"
-    echo "Example: ./build-release.sh 1.2.0"
+    echo "Example: ./build-release.sh 1.2.0         (stable)"
+    echo "         ./build-release.sh 1.2.0-beta.1  (beta)"
     exit 1
 fi
 
-if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Error: VERSION must be in semver format (e.g. 1.2.0)"
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
+    echo "Error: VERSION must be MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N (e.g. 1.2.0, 1.2.0-beta.1)"
     exit 1
+fi
+
+# Beta builds follow the beta branch's manifest by default; Info.plist only takes
+# the numeric part (CFBundleShortVersionString must be MAJOR.MINOR.PATCH).
+CORE_VERSION="${VERSION%%-*}"
+if [[ "$VERSION" == *-beta.* ]]; then
+    CHANNEL="beta"
+else
+    CHANNEL="stable"
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -20,11 +30,12 @@ echo "=== Building CallBridge v${VERSION} ==="
 
 # 1. Update version in main.swift
 sed -i '' "s/^let appVersion = \".*\"/let appVersion = \"${VERSION}\"/" CallBridge/CallBridge/main.swift
-echo "Updated appVersion in main.swift"
+sed -i '' "s/^let appBuildChannel = \".*\"/let appBuildChannel = \"${CHANNEL}\"/" CallBridge/CallBridge/main.swift
+echo "Updated appVersion (${VERSION}) and appBuildChannel (${CHANNEL}) in main.swift"
 
 # 2. Update Info.plist
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" CallBridge/CallBridge/Info.plist
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" CallBridge/CallBridge/Info.plist
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${CORE_VERSION}" CallBridge/CallBridge/Info.plist
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${CORE_VERSION}" CallBridge/CallBridge/Info.plist
 echo "Updated Info.plist"
 
 # 3. Build
