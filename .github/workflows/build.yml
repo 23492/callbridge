@@ -1,0 +1,21 @@
+name: Build
+
+# Compile check on every push to beta and on pull requests: the app only builds
+# on macOS (Cocoa/SwiftUI), so this is the only place the full source is type-checked.
+on:
+  push:
+    branches: [beta]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update-channel logic tests
+        run: ./scripts/test-update-channel.sh
+
+      - name: Build app
+        working-directory: CallBridge
+        run: swift build -c release
