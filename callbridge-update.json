@@ -1,6 +1,6 @@
 {
-  "version": "2.0.8",
-  "url": "https://github.com/23492/callbridge/releases/download/v2.0.8/CallBridge.app.zip",
-  "signature": "zKdiZUfFK82qoLo0Ap/eLr7Iwe3wpUC7l3Sj0bIWMNiNb8XRKnhBy2Vd/YetQDvTYcY2mJ2aRdLImD6gMn2wBA==",
-  "notes": "Grote betrouwbaarheidsupdate: server loopt niet meer vast, geen dubbele opslaan-dialogen, ander nummer kiezen tijdens opname start de flow opnieuw, menu toont alleen je eigen taken."
+  "version": "2.1.0-beta.0",
+  "url": "https://github.com/23492/callbridge/releases/download/v2.1.0-beta.0/CallBridge.app.zip",
+  "signature": "0rkaqYi9Qr03f+4EMb6He6aXGf5/hJ1IIYy+nUPyeBVheFw4aOSHXjsDibeKeRi3quhpp/Ipnbr25t+4gbHlDA==",
+  "notes": ""
 }
