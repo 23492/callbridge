@@ -10,7 +10,7 @@ The Audio Hijack session (`audio-hijack/Voice Chat.ah4session`) records Phone.ap
 
 | Signal | Answered call | NNO |
 |---|---|---|
-| Ringback tone (NL/EU: 425 Hz, 1 s on / 4 s off) | A few cycles, then stops | Runs until hang-up, or until voicemail picks up |
+| Ringback tone (425 Hz, or 440+480 Hz; see phase 1 results) | A few cycles, then stops | Runs until hang-up, or until voicemail picks up |
 | Busy tone (425 Hz, 0.5 s / 0.5 s) | Never | Busy line |
 | Remote speech after ringback | Short "met ..." then back-and-forth | A monologue (voicemail greeting or network message: "het nummer dat u belt...") |
 | Turn-taking between channels | Many alternations | 0 or 1 alternations |
@@ -20,7 +20,7 @@ The Audio Hijack session (`audio-hijack/Voice Chat.ah4session`) records Phone.ap
 
 Every row is cheap to measure: Goertzel filters for the tones, an energy plus spectral-flatness voice activity detector per channel, and segment counting. Ringback cadence plus "no turn-taking" should already separate most cases. The other rows cover voicemail that picks up fast and network messages.
 
-Assumption to verify first: the stereo layout. If the recording turns out to be a mono mix, turn-taking drops out as a feature and tones, monologue length and duration carry the decision. Phase 1 checks this before any detector code is written.
+Phase 1 measured the stereo layout on real recordings: see "Phase 1 results" below.
 
 ## Where it runs
 
@@ -62,6 +62,43 @@ Offline only, nothing ships to users.
 
 Done when: at least 50 labelled NNO and 50 answered recordings, plus a CSV of features.
 
+#### Phase 1 results (2026-10-01, first 22 recordings)
+
+Recordings from 2026-09-24 to 2026-10-01, labelled against Kiran's Salesforce Tasks by start time and duration (read-only SOQL). The two long calls match `CallDurationInSeconds` exactly (776 s, 703 s).
+
+Channel layout of the `Telefoongesprek` files: stereo, left = Kiran's microphone, right = Phone.app output (the other side, including all network tones). The channels are uncorrelated (r ≈ 0.0). The two `Voice Chat 20261001` files are a mono mix (r = 1.00) from a differently configured session, so the detector needs a mono fallback.
+
+Tones seen on the right channel:
+
+| Tone | Where it comes from | Files |
+|---|---|---|
+| 440 + 480 Hz, 2 s on / 4 s off | Ringback generated on the Apple side (US-style cadence) | most NNOs |
+| 425 Hz, 1 s on / 4 s off | Dutch network ringback | 4 files |
+| 950 / 1400 / 1800 Hz | SIT tone: number not in service | 1 file |
+
+So the detector must recognise both ringback families; 425 Hz alone would have missed most NNOs.
+
+The deciding feature is Kiran's own channel. In every NNO it is silent (< 1.5 s of speech), except when he leaves a voicemail: then a long remote greeting comes first, followed by one or two short stretches of his own speech. Real conversations have ≥ 10 s of own speech in 4 or more stretches.
+
+Prototype rule (`docs/beta/nno-prototype.js`), in order:
+
+1. SIT tone → NNO
+2. mono recording → conversation if > 90 s, otherwise unsure
+3. own speech ≥ 10 s or ≥ 4 stretches → conversation
+4. own speech < 1.5 s → NNO
+5. ≤ 2 own stretches after ≥ 8 s remote speech → NNO (voicemail left)
+6. otherwise unsure
+
+Result:
+
+| | Salesforce says NNO | Salesforce says call | No matching Task |
+|---|---|---|---|
+| Detector: NNO | 14 | 0 | 4 |
+| Detector: conversation | 0 | 2 | 3 |
+| Detector: unsure | 0 | 0 | 0 |
+
+16 of 16 labelled recordings correct, no false NNO. The set is far too small for the precision targets, and mono recordings can only be judged on duration. Next: more recordings, especially short answered calls ("bel je later terug") and mono files.
+
 ### Phase 2: detector core
 
 - `NNODetector.swift`: features (duration, ringback seconds and cadence match, busy cadence, beep found, remote monologue length, turn count, local speech seconds) and `classify() -> (verdict, confidence, reason)`.
@@ -101,6 +138,6 @@ Done when: zero false auto-NNOs over 2 weeks of Kiran's own calls.
 
 ## Open questions
 
-1. Stereo layout: one channel per side, or something else? (Phase 1)
-2. Do Welisa colleagues call abroad? Other countries use other ringback tones (UK 400+450 Hz, US 440+480 Hz). Cheap to add, but needs examples.
+1. Stereo layout: answered in phase 1 (left = Kiran, right = other side). Why are the `Voice Chat` files mono? Probably a session that was set up separately from the shipped template.
+2. Do Welisa colleagues call abroad? The 440+480 Hz tone already shows up for Dutch numbers. Other tones (UK 400+450 Hz) are cheap to add, but need examples.
 3. When the voicemail picks up and Kiran leaves a message, is that still an NNO? The current NNO flow suggests yes.
