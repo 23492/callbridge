@@ -124,6 +124,116 @@ class RealModeTest(unittest.TestCase):
             self._assert_one_task_create()
 
 
+class FollowUpDryRunTest(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeSalesforce(query_results={
+            "FROM Task WHERE WhoId": {
+                "records": [{"Id": "00T000000000009AAA", "Subject": "Call back"}],
+            },
+        })
+        support.patch_backend(self, self.fake)
+
+    def test_set_follow_up_date_logs_and_does_not_write(self):
+        with mock.patch.dict(os.environ, DRY_ON):
+            with self.assertLogs("services.salesforce", level="INFO") as cm:
+                sfsvc.set_follow_up_date("00T000000000001AAA", "2026-10-09")
+        lines = _dry_lines(cm, "DRY-RUN update Task 00T000000000001AAA")
+        self.assertEqual(len(lines), 1, cm.output)
+        self.assertIn("Auto_Generate_Follow_Up_Task__c", lines[0])
+        self.assertEqual(self.fake.writes(), [])
+
+    def test_complete_due_followups_logs_and_keeps_query(self):
+        with mock.patch.dict(os.environ, DRY_ON):
+            with self.assertLogs("services.salesforce", level="INFO") as cm:
+                done = sfsvc.complete_due_followup_tasks(CONTACT_ID)
+        self.assertEqual(done, 1)
+        lines = _dry_lines(cm, "DRY-RUN update Task ")
+        self.assertEqual(len(lines), 1, cm.output)
+        self.assertIn("Completed", lines[0])
+        self.assertEqual(self.fake.writes(), [])
+        self.assertTrue(any("FROM Task WHERE WhoId" in q for q in self.fake.queries()))
+
+
+class NnoDryRunTest(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeSalesforce(query_results=CONTACT_QUERY)
+        support.patch_backend(self, self.fake)
+
+    def _log_nno(self):
+        kwargs = {"salesforce_id": CONTACT_ID, "salesforce_type": "Contact"}
+        support.assert_no_param_defaults(self, kwargs)
+        return main.log_nno(**kwargs)
+
+    def test_nno_dry_run_makes_no_writes_and_logs_two_tasks(self):
+        with mock.patch.dict(os.environ, DRY_ON):
+            with self.assertLogs("services.salesforce", level="INFO") as cm:
+                self._log_nno()
+        self.assertEqual(self.fake.writes(), [])
+        lines = _dry_lines(cm, "DRY-RUN create Task ")
+        self.assertEqual(len(lines), 2, cm.output)
+        self.assertTrue(any('"NNO"' in m for m in lines), lines)
+        self.assertTrue(any('"Call back"' in m for m in lines), lines)
+
+    def test_nno_dry_run_marks_menu_entry(self):
+        with mock.patch.dict(os.environ, DRY_ON):
+            self._log_nno()
+        self.assertTrue(main._completed_jobs[0]["contact_name"].startswith("[DRY-RUN] "))
+
+    def test_nno_real_mode_creates_two_tasks(self):
+        with mock.patch.dict(os.environ, {"CALLBRIDGE_DRY_RUN": "0"}):
+            self._log_nno()
+        writes = self.fake.writes()
+        self.assertEqual([w[:2] for w in writes], [("create", "Task"), ("create", "Task")], writes)
+        self.assertFalse(main._completed_jobs[0]["contact_name"].startswith("[DRY-RUN]"))
+
+
+class PipelineMenuMarkingTest(unittest.TestCase):
+    def setUp(self):
+        self.fake = FakeSalesforce(query_results=CONTACT_QUERY)
+        support.patch_backend(self, self.fake, actions=ACTIONS)
+
+    def test_pipeline_dry_run_marks_menu_entry(self):
+        with mock.patch.dict(os.environ, DRY_ON):
+            main.process_pipeline(
+                "job-dry-2", _temp_audio(), "+31612345678", direction="Outbound",
+                salesforce_id=CONTACT_ID, salesforce_type="Contact",
+            )
+        self.assertEqual(main._completed_jobs[0]["contact_name"], "[DRY-RUN] Jan Jansen")
+
+
+class DryRunVisibilityTest(unittest.TestCase):
+    def _env_without_flag(self):
+        return {k: v for k, v in os.environ.items() if k != "CALLBRIDGE_DRY_RUN"}
+
+    def test_health_reports_dry_run_true(self):
+        with mock.patch.dict(os.environ, DRY_ON):
+            body = main.health()
+        self.assertIs(body["dry_run"], True)
+        for key in ("status", "pid", "ppid"):
+            self.assertIn(key, body)
+
+    def test_health_reports_dry_run_false(self):
+        with mock.patch.dict(os.environ, self._env_without_flag(), clear=True):
+            self.assertIs(main.health()["dry_run"], False)
+        with mock.patch.dict(os.environ, {"CALLBRIDGE_DRY_RUN": "0"}):
+            body = main.health()
+        self.assertIs(body["dry_run"], False)
+        for key in ("status", "pid", "ppid"):
+            self.assertIn(key, body)
+
+    def test_startup_line_when_dry_run(self):
+        with mock.patch.dict(os.environ, DRY_ON):
+            with self.assertLogs("main", level="WARNING") as cm:
+                main.log_dry_run_state()
+        self.assertEqual([r.getMessage() for r in cm.records], ["DRY-RUN active: no Salesforce writes"])
+        self.assertEqual(cm.records[0].levelname, "WARNING")
+
+    def test_no_startup_line_when_real(self):
+        with mock.patch.dict(os.environ, self._env_without_flag(), clear=True):
+            with self.assertNoLogs("main", level="DEBUG"):
+                main.log_dry_run_state()
+
+
 class SupportSelfTest(unittest.TestCase):
     def test_form_default_is_not_none(self):
         import fastapi
