@@ -222,6 +222,37 @@ def status():
     return {"processing": processing, "completed": completed}
 
 
+@app.get("/sessions/{client_ref}")
+def session_status(client_ref: str):
+    """Where a session stands, by the app's own session id (crash resume).
+
+    stage is unknown, processing, done or failed. An entry left in processing
+    by a backend that restarted mid-run reports failed with error "interrupted",
+    so the app resends and the ledger resumes from the last write.
+    """
+    if not ledger.is_valid_client_ref(client_ref):
+        raise HTTPException(status_code=400, detail="Invalid client_ref")
+
+    entry = ledger.lookup(client_ref)
+    if entry is None:
+        return {"stage": "unknown", "step": None, "task_id": None, "error": None}
+
+    if entry.get("kind") == "nno":
+        task_id = entry.get("nno_task_id")
+    else:
+        task_id = entry.get("call_task_id")
+    step = entry.get("step")
+    status = entry.get("status")
+
+    if ledger.in_flight(client_ref):
+        return {"stage": "processing", "step": step, "task_id": task_id, "error": None}
+    if status == "done":
+        return {"stage": "done", "step": step, "task_id": task_id, "error": None}
+    if status == "failed":
+        return {"stage": "failed", "step": step, "task_id": task_id, "error": entry.get("error")}
+    return {"stage": "failed", "step": step, "task_id": task_id, "error": "interrupted"}
+
+
 @app.get("/contact-search")
 def contact_search(
     phone: str | None = Query(None),
