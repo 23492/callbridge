@@ -13,9 +13,68 @@ WRITE_OPS = frozenset(("create", "update", "upsert", "delete"))
 ALLOWED_FUNCTION = "_sf_write"
 
 
+def _is_getattr_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+    )
+
+
+class _WriteFinder(ast.NodeVisitor):
+    """Reports <client>.<SObject>.<op>(...) calls and <name>.<op>(...) calls where
+    <name> was bound by getattr(...), unless inside _sf_write.
+
+    Dict updates (d.update(x), jobs[k].update(x)) do not match either shape."""
+
+    def __init__(self, source: str, filename: str):
+        self.source = source
+        self.filename = filename
+        self.function_stack: list[str] = []
+        self.getattr_names: list[set[str]] = [set()]
+        self.offences: list[tuple[str, int, str]] = []
+
+    def _visit_function(self, node):
+        self.function_stack.append(node.name)
+        self.getattr_names.append(set())
+        self.generic_visit(node)
+        self.getattr_names.pop()
+        self.function_stack.pop()
+
+    visit_FunctionDef = _visit_function
+    visit_AsyncFunctionDef = _visit_function
+
+    def visit_Assign(self, node):
+        if _is_getattr_call(node.value):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    self.getattr_names[-1].add(target.id)
+        self.generic_visit(node)
+
+    def _bound_by_getattr(self, name: str) -> bool:
+        return any(name in scope for scope in self.getattr_names)
+
+    def visit_Call(self, node):
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in WRITE_OPS:
+            receiver = func.value
+            is_sobject = isinstance(receiver, ast.Attribute) and receiver.attr[:1].isupper()
+            is_getattr_bound = (
+                (isinstance(receiver, ast.Name) and self._bound_by_getattr(receiver.id))
+                or _is_getattr_call(receiver)
+            )
+            inside_guard = ALLOWED_FUNCTION in self.function_stack
+            if (is_sobject or is_getattr_bound) and not inside_guard:
+                text = ast.get_source_segment(self.source, node) or ast.dump(func)
+                self.offences.append((self.filename, node.lineno, text))
+        self.generic_visit(node)
+
+
 def find_sf_writes(source: str, filename: str) -> list[tuple[str, int, str]]:
     """Return (filename, line, call text) for each Salesforce write outside _sf_write."""
-    return []
+    finder = _WriteFinder(source, filename)
+    finder.visit(ast.parse(source, filename=filename))
+    return finder.offences
 
 
 def _backend_files() -> list[pathlib.Path]:
