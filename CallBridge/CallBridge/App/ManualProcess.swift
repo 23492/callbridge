@@ -6,6 +6,8 @@ import AVFoundation
 // MARK: - Manual Process View Model
 
 class ManualProcessViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate {
+    /// The persisted session for this file; sent to the backend as client_ref.
+    let sessionID: UUID
     let audioPath: String
     weak var appDelegate: AppDelegate?
 
@@ -27,7 +29,8 @@ class ManualProcessViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
         (audioPath as NSString).lastPathComponent
     }
 
-    init(audioPath: String, appDelegate: AppDelegate) {
+    init(sessionID: UUID, audioPath: String, appDelegate: AppDelegate) {
+        self.sessionID = sessionID
         self.audioPath = audioPath
         self.appDelegate = appDelegate
         super.init()
@@ -129,6 +132,7 @@ class ManualProcessViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
         isSending = true
         stopPlayback()
         appDelegate?.sendToBackend(
+            sessionID: sessionID,
             audioPath: audioPath,
             phoneNumber: selectedContact?.phone ?? "",
             contact: selectedContact

@@ -67,8 +67,8 @@ class SaveDialogViewModel: ObservableObject {
 
     func discard() {
         guard let appDelegate = appDelegate else { return }
-        // To the Trash, not a hard delete — recoverable if clicked by mistake.
-        appDelegate.trashRecording(audioPath)
+        // Session to discarded, then the file to the Trash (recoverable if clicked by mistake).
+        appDelegate.discardSession(sessionID, audioPath: audioPath)
         NSLog("CallBridge: Recording discarded: %@", audioPath)
         appDelegate.dialogFinished(audioPath: audioPath)
         appDelegate.dismissDialog()
@@ -81,7 +81,7 @@ class SaveDialogViewModel: ObservableObject {
         appDelegate.dialogFinished(audioPath: audioPath)
         // The request lives in AppDelegate: this view model is freed as soon as the
         // dialog closes, which silently dropped the NNO result (and state reset).
-        appDelegate.sendNNO(contact: contact, audioPath: audioPath)
+        appDelegate.sendNNO(sessionID: sessionID, contact: contact, audioPath: audioPath)
         appDelegate.dismissDialog()
     }
 }

@@ -502,7 +502,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
     func showManualProcessWindow(audioPath: String) {
         dismissManualWindow()
-        let viewModel = ManualProcessViewModel(audioPath: audioPath, appDelegate: self)
+        // A file that belongs to an unfinished session keeps that session id. A finished
+        // recording picked again gets a new one; the backend's audio hash + target check
+        // then blocks it only for the same Salesforce record.
+        let sessionID: UUID
+        if let open = reusableSession(forAudioPath: audioPath, in: sessionStore.list()) {
+            sessionID = open.id
+        } else {
+            var record = SessionRecord(source: .manual, phoneNumber: "", now: Date())
+            record.audioPath = audioPath
+            do {
+                try sessionStore.save(record)
+            } catch {
+                debugLog("SessionStore: save failed for \(record.id): \(error.localizedDescription)")
+            }
+            sessionID = record.id
+        }
+        let viewModel = ManualProcessViewModel(sessionID: sessionID, audioPath: audioPath, appDelegate: self)
         manualViewModel = viewModel
 
         let view = ManualProcessView(viewModel: viewModel)
@@ -982,6 +998,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }
     }
 
+    /// "Niet opslaan": the session is marked discarded first, then the recording goes to
+    /// the Trash at once, as before.
+    func discardSession(_ sessionID: UUID, audioPath: String) {
+        updateSession(sessionID) { $0.stage = .discarded }
+        trashRecording(audioPath)
+    }
+
     /// Move a recording to the Trash (recoverable) instead of deleting it outright.
     func trashRecording(_ path: String) {
         do {
@@ -1029,9 +1052,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         return nil
     }
 
-    func sendNNO(contact: ContactInfo, audioPath: String) {
+    func sendNNO(sessionID: UUID, contact: ContactInfo, audioPath: String) {
         guard let contactId = contact.id,
               let url = URL(string: "\(serverURL)/log-nno") else { return }
+        updateSession(sessionID) {
+            $0.stage = .loggingNNO
+            $0.wasNNO = true
+            $0.contactID = contact.id
+            $0.contactType = contact.type
+            $0.contactName = contact.name
+            $0.attempts += 1
+        }
         beginBackendWork()
 
         let boundary = UUID().uuidString
@@ -1043,21 +1074,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         var body = Data()
         body.append(Self.multipartField("salesforce_id", contactId, boundary: boundary))
         body.append(Self.multipartField("salesforce_type", contact.type, boundary: boundary))
+        body.append(Self.multipartField("client_ref", sessionID.uuidString, boundary: boundary))
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body
 
         // Strong self: this outlives the (already closed) dialog and its view model.
         URLSession.shared.dataTask(with: request) { data, response, error in
             let failure = Self.backendFailure(data, response, error)
+            let answer = Self.submitAnswer(data, response, error)
             DispatchQueue.main.async {
-                if let failure = failure {
-                    NSLog("CallBridge: NNO error: %@", failure)
-                    self.showNotification(title: "CallBridge", message: "NNO fout: \(failure) — opname bewaard")
-                } else {
+                let stage = stageAfterSubmit(httpStatus: answer.httpStatus, bodyStatus: answer.bodyStatus, nno: true)
+                switch stage {
+                case .done:
+                    self.updateSession(sessionID) { $0.stage = .done; $0.taskID = answer.taskID }
                     NSLog("CallBridge: NNO logged successfully")
-                    // Only now: an NNO needs no audio, but keep it until the log succeeded.
-                    self.trashRecording(audioPath)
+                    // The recording stays on disk: sessions and their audio are kept 7 days
+                    // and pruned by retention (D-03), so no Trash here.
                     self.showNotification(title: "CallBridge", message: "NNO gelogd + follow-up aangemaakt")
+                case .loggingNNO:
+                    // 409: the backend is still logging this NNO; the session poller resolves it.
+                    NSLog("CallBridge: NNO already in progress on the backend for %@", sessionID.uuidString)
+                default:
+                    let message = failure ?? "onbekende fout"
+                    self.updateSession(sessionID) { $0.stage = .failed; $0.error = message }
+                    NSLog("CallBridge: NNO error: %@", message)
+                    self.showNotification(title: "CallBridge", message: "NNO fout: \(message) — opname bewaard")
                 }
                 self.endBackendWork()
             }
