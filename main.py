@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import subprocess
@@ -31,6 +32,7 @@ from services.salesforce import (
     _get_user_id,
     dry_run_enabled,
 )
+from services import ledger
 
 # Ensure log directory exists before opening FileHandler (D-12)
 _log_dir = Path.home() / "Library" / "Logs" / "CallBridge"
@@ -296,35 +298,29 @@ async def process_recording(
     direction: str = Form("Outbound"),
     salesforce_id: str | None = Form(None),
     salesforce_type: str | None = Form(None),
+    client_ref: str | None = Form(None),
 ):
     """
     Process an audio recording. Called by CallBridge after user confirms save.
     Phone number is always provided by CallBridge.
+
+    client_ref is the app's session id. A session that already finished returns
+    {"status": "duplicate", "task_id": ...} without writing anything (D-11).
     """
     if salesforce_id or salesforce_type:
         if salesforce_type not in ALLOWED_RECORD_TYPES or not is_valid_sf_id(salesforce_id):
             raise HTTPException(status_code=400, detail="Invalid salesforce_id/salesforce_type")
-    suffix = os.path.splitext(audio.filename or ".wav")[1]
-    fd, temp_path = tempfile.mkstemp(suffix=suffix, prefix="calllog_")
-    with os.fdopen(fd, "wb") as f:
-        content = await audio.read()
-        f.write(content)
+    if client_ref is not None and not ledger.is_valid_client_ref(client_ref):
+        raise HTTPException(status_code=400, detail="Invalid client_ref")
 
-    logger.info("Received: %s, phone: %s, sf: %s/%s", audio.filename, phone_number, salesforce_type, salesforce_id)
-
-    job_id = str(uuid.uuid4())
-    _start_job(job_id)
-    background_tasks.add_task(
-        process_pipeline,
-        job_id,
-        temp_path,
+    content = await audio.read()
+    return _start_pipeline(
+        background_tasks, audio.filename, content, client_ref,
         phone_number=phone_number,
         direction=direction,
         salesforce_id=salesforce_id,
         salesforce_type=salesforce_type,
     )
-
-    return {"status": "processing", "file": audio.filename, "phone": phone_number}
 
 
 @app.post("/process-manual")
@@ -333,23 +329,62 @@ async def process_manual(
     audio: UploadFile = File(...),
     phone_number: str = Form(...),
     direction: str = Form("Outbound"),
+    client_ref: str | None = Form(None),
 ):
     """Dashboard endpoint for manual uploads."""
-    suffix = os.path.splitext(audio.filename or ".wav")[1]
-    fd, temp_path = tempfile.mkstemp(suffix=suffix, prefix="calllog_")
-    with os.fdopen(fd, "wb") as f:
-        content = await audio.read()
-        f.write(content)
+    if client_ref is not None and not ledger.is_valid_client_ref(client_ref):
+        raise HTTPException(status_code=400, detail="Invalid client_ref")
 
-    logger.info("Manual upload: %s, phone: %s", audio.filename, phone_number)
+    content = await audio.read()
+    return _start_pipeline(
+        background_tasks, audio.filename, content, client_ref,
+        phone_number=phone_number,
+        direction=direction,
+    )
+
+
+def _start_pipeline(background_tasks, filename, content: bytes, client_ref: str | None, **pipeline_kwargs):
+    """Ledger check, temp file and background scheduling shared by /process and /process-manual."""
+    phone_number = pipeline_kwargs["phone_number"]
+    audio_sha256 = hashlib.sha256(content).hexdigest()
+    # Dashboard and older clients send no session id; the audio hash still guards them.
+    ref = client_ref or str(uuid.uuid4())
+
+    entry = ledger.lookup(ref)
+    if entry and entry.get("kind", "call") != "call":
+        logger.warning("Rejected /process for client_ref %s: ledger entry is kind %s", ref, entry.get("kind"))
+        raise HTTPException(status_code=409, detail="client_ref hoort bij een ander soort sessie")
+    if entry and entry.get("status") == "done":
+        logger.info("Deduplicated /process for client_ref %s -> Task %s", ref, entry.get("call_task_id"))
+        return {"status": "duplicate", "task_id": entry.get("call_task_id")}
+    if not ledger.claim(ref):
+        logger.info("client_ref %s is already being processed; not starting a second pipeline", ref)
+        return {"status": "processing", "file": filename, "phone": phone_number}
+
+    try:
+        suffix = os.path.splitext(filename or ".wav")[1]
+        fd, temp_path = tempfile.mkstemp(suffix=suffix, prefix="calllog_")
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+    except Exception:
+        ledger.release(ref)
+        raise
+
+    logger.info("Received: %s, phone: %s, sf: %s/%s, client_ref: %s", filename, phone_number,
+                pipeline_kwargs.get("salesforce_type"), pipeline_kwargs.get("salesforce_id"), ref)
 
     job_id = str(uuid.uuid4())
     _start_job(job_id)
     background_tasks.add_task(
-        process_pipeline, job_id, temp_path, phone_number=phone_number, direction=direction
+        process_pipeline,
+        job_id,
+        temp_path,
+        client_ref=ref,
+        audio_sha256=audio_sha256,
+        **pipeline_kwargs,
     )
 
-    return {"status": "processing", "file": audio.filename, "phone": phone_number}
+    return {"status": "processing", "file": filename, "phone": phone_number}
 
 
 def process_pipeline(
@@ -359,11 +394,21 @@ def process_pipeline(
     direction: str = "Outbound",
     salesforce_id: str | None = None,
     salesforce_type: str | None = None,
+    client_ref: str | None = None,
+    audio_sha256: str | None = None,
 ):
     """
     Full processing pipeline. Runs as a sync background task.
     Phone number is always provided (by CallBridge or dashboard).
+
+    With client_ref set, every step and every Salesforce write is checkpointed in
+    the ledger, so a resend of the same session skips what already happened.
+    Without it (direct callers) the pipeline behaves as before.
     """
+    ref = client_ref
+    if ref:
+        logger.info("Pipeline start for client_ref %s", ref)
+        ledger.checkpoint(ref, kind="call", status="processing", step="starting", audio_sha256=audio_sha256)
     try:
         # 1. Find contact in Salesforce (or use provided ID)
         resolved_type = salesforce_type or "Contact"
@@ -377,10 +422,12 @@ def process_pipeline(
                 logger.error("No Salesforce contact found for %s. Skipping.", phone_number)
                 _notify_error(f"Geen contact gevonden voor {phone_number}")
                 _fail_job(job_id)
+                ledger.checkpoint(ref, status="failed", error=f"no contact for {phone_number}")
                 return
             resolved_type = contact.get("attributes", {}).get("type", "Contact")
 
         _update_job(job_id, contact_name=contact["Name"], step="transcribing")
+        ledger.checkpoint(ref, step="transcribing")
 
         # 2. Transcribe audio via AssemblyAI
         logger.info("Transcribing audio for %s...", contact["Name"])
@@ -391,9 +438,11 @@ def process_pipeline(
             logger.warning("Empty transcript for %s. Skipping.", contact["Name"])
             _notify_error(f"Leeg transcript voor {contact['Name']}")
             _fail_job(job_id)
+            ledger.checkpoint(ref, status="failed", error="empty transcript")
             return
 
         _update_job(job_id, step="summarizing")
+        ledger.checkpoint(ref, step="summarizing")
 
         # 3. Generate summary via Gemini. A failure here must not throw away a paid-for
         # transcript: log the call anyway, with the transcript attached as usual.
@@ -410,6 +459,7 @@ def process_pipeline(
         duration = result["audio_duration"]
 
         _update_job(job_id, step="extracting_actions")
+        ledger.checkpoint(ref, step="extracting_actions")
 
         # 5. Extract action items from summary
         follow_up_date = None
@@ -424,9 +474,16 @@ def process_pipeline(
             logger.warning("Action item extraction failed (non-fatal): %s", e)
 
         _update_job(job_id, step="saving_to_salesforce")
+        ledger.checkpoint(ref, step="saving_to_salesforce")
 
         # 6. Create Call Log in Salesforce (with follow-up date if found)
-        task_id = create_call_log(contact, summary, duration, direction, follow_up_date)
+        entry = ledger.lookup(ref)
+        if entry and entry.get("call_task_id"):
+            task_id = entry["call_task_id"]
+            logger.info("Call Task %s already exists for client_ref %s; not creating it again", task_id, ref)
+        else:
+            task_id = create_call_log(contact, summary, duration, direction, follow_up_date)
+            ledger.checkpoint(ref, call_task_id=task_id)
 
         # The logged call satisfies any overdue follow-up reminder on the person.
         # Only now — after the call Task exists — so a failed transcription/summary
@@ -446,6 +503,7 @@ def process_pipeline(
                     logger.warning("Failed to create action task: %s", e)
 
         logger.info("Pipeline complete: %s (%s) -> Task %s", contact["Name"], phone_number, task_id)
+        ledger.checkpoint(ref, status="done", step="done")
         # Account-only associations have no person Id; the menu links to the Account.
         record_id = contact.get("Id") or contact.get("AccountId") or ""
         _complete_job(job_id, contact["Name"], record_id, resolved_type, task_id)
@@ -454,8 +512,13 @@ def process_pipeline(
     except Exception as e:
         logger.error("Pipeline error: %s", e, exc_info=True)
         _fail_job(job_id)
+        try:
+            ledger.checkpoint(ref, status="failed", error=str(e))
+        except Exception as ledger_error:
+            logger.error("Could not record failure for client_ref %s: %s", ref, ledger_error)
         _notify_error(str(e))
     finally:
+        ledger.release(ref)
         # 9. Clean up temp file — also on failure (the app keeps the original).
         try:
             os.remove(audio_path)
