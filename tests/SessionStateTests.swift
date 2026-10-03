@@ -96,6 +96,17 @@ check(stageForBackend(stage: "processing", step: nil) == .transcribing, "backend
 check(stageForBackend(stage: "done", step: nil) == .done, "backend done -> done")
 check(stageForBackend(stage: "failed", step: "transcribing") == .failed, "backend failed -> failed")
 
+// Stage after POST /process or POST /log-nno answered
+check(stageAfterSubmit(httpStatus: 200, bodyStatus: "duplicate", nno: false) == .done, "process 200/duplicate -> done")
+check(stageAfterSubmit(httpStatus: 200, bodyStatus: "processing", nno: false) == .transcribing, "process 200/processing -> transcribing")
+check(stageAfterSubmit(httpStatus: 500, bodyStatus: nil, nno: false) == .failed, "process 500 -> failed")
+check(stageAfterSubmit(httpStatus: 409, bodyStatus: nil, nno: false) == .failed, "process 409 -> failed")
+check(stageAfterSubmit(httpStatus: nil, bodyStatus: nil, nno: false) == .failed, "process transport error (nil) -> failed")
+check(stageAfterSubmit(httpStatus: 200, bodyStatus: "ok", nno: true) == .done, "NNO 200 -> done")
+check(stageAfterSubmit(httpStatus: 409, bodyStatus: nil, nno: true) == .loggingNNO, "NNO 409 -> loggingNNO (still running on the backend)")
+check(stageAfterSubmit(httpStatus: 500, bodyStatus: nil, nno: true) == .failed, "NNO 500 -> failed")
+check(stageAfterSubmit(httpStatus: nil, bodyStatus: nil, nno: true) == .failed, "NNO transport error (nil) -> failed")
+
 // Retry stage and the wasNNO field
 var nno = rec(.failed)
 nno.wasNNO = true

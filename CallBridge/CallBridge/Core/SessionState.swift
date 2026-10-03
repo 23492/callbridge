@@ -175,6 +175,18 @@ func stageForBackend(stage: String, step: String?) -> SessionStage? {
     }
 }
 
+/// The stage a session moves to once POST /process (`nno: false`) or POST /log-nno
+/// (`nno: true`) has answered. `httpStatus` is nil on a transport error; `bodyStatus` is the
+/// response's "status" key. A 409 on /log-nno means the backend is still logging that NNO,
+/// so the session stays in loggingNNO and the poller resolves it.
+func stageAfterSubmit(httpStatus: Int?, bodyStatus: String?, nno: Bool) -> SessionStage {
+    guard let code = httpStatus else { return .failed }
+    if nno && code == 409 { return .loggingNNO }
+    guard (200...299).contains(code) else { return .failed }
+    if nno { return .done }
+    return bodyStatus == "duplicate" ? .done : .transcribing
+}
+
 /// Where "Opnieuw proberen" sends a failed session (D-04).
 func retryStage(for record: SessionRecord) -> SessionStage {
     record.wasNNO ? .loggingNNO : .uploading

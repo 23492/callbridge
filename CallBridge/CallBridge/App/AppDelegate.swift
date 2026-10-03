@@ -23,7 +23,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     /// Identifies the call currently being recorded. Every async completion of the
     /// call-end detection checks it, so a restarted or finished call can never be
     /// completed twice (double dialog / double upload) or by a stale callback.
+    /// It is the persisted session id (sessions/<id>.json), sent to the backend as client_ref.
     var currentCallID: UUID?
+    /// One JSON record per recording session; each stage is written before its side effect (FND-04).
+    lazy var sessionStore = SessionStore(directory: URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/com.welisa.CallBridge/sessions")))
     var settingsWindow: NSWindow?
     var statusTimer: Timer?
     var lastStatus: StatusResponse?
@@ -549,6 +552,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         if case let .recording(previousNumber, _, previousID) = state {
             NSLog("CallBridge: New number while recording %@ — restarting flow for %@", previousNumber, phoneNumber)
             debugLog("handleURL: restart — abandoning recording for \(previousNumber), new call \(phoneNumber)")
+            updateSession(previousID) {
+                $0.stage = .discarded
+                $0.error = "afgebroken: nieuw nummer"
+            }
             recorder.stop(session: previousID)
             currentCallID = nil
             forwardCall(url: url)
@@ -572,7 +579,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     /// end of the call. Independent of any save dialog that may still be open for a
     /// previous call — those only touch state that belongs to them.
     private func beginRecording(phoneNumber: String, callID: UUID) {
+        // The record exists before Audio Hijack starts; without resumeInfo a relaunch
+        // knows the app died before capture began.
+        var record = SessionRecord(id: callID, source: .call, phoneNumber: phoneNumber, now: Date())
+        record.recorderKind = recorder.kind
+        do {
+            try sessionStore.save(record)
+        } catch {
+            debugLog("SessionStore: save failed for \(callID): \(error.localizedDescription)")
+        }
         let info = recorder.start(session: callID)
+        updateSession(callID) { $0.resumeInfo = info }
         currentCallID = callID
         state = .recording(phoneNumber: phoneNumber, startTime: info.startTime, sessionID: callID)
         updateStatusIcon()
@@ -586,18 +603,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             finishRecording(callID: id, audioPath: url.path)
         case .failure(.noFile):
             guard currentCallID == id else { return }
+            updateSession(id) { $0.stage = .failed; $0.error = "Geen opname gevonden" }
             currentCallID = nil
             state = .idle
             updateStatusIcon()
             showNotification(title: "CallBridge", message: "Geen opname gevonden")
         case .failure(.timeout):
             guard currentCallID == id else { return }
+            updateSession(id) { $0.stage = .failed; $0.error = "opname langer dan 2 uur" }
             currentCallID = nil
             state = .idle
             updateStatusIcon()
         case .failure(.startFailed(let reason)):
             guard currentCallID == id else { return }
             debugLog("recorderFinished: recorder failed to start for \(id): \(reason)")
+            updateSession(id) { $0.stage = .failed; $0.error = "opname niet gestart: \(reason)" }
             currentCallID = nil
             state = .idle
             updateStatusIcon()
@@ -622,12 +642,39 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     private func finishRecording(callID: UUID, audioPath: String) {
         guard currentCallID == callID, case let .recording(phoneNumber, _, _) = state else { return }
         currentCallID = nil
-        onRecordingComplete(phoneNumber: phoneNumber, audioPath: audioPath)
+        updateSession(callID) {
+            $0.stage = .awaitingDecision
+            $0.audioPath = audioPath
+        }
+        onRecordingComplete(sessionID: callID, phoneNumber: phoneNumber, audioPath: audioPath)
+    }
+
+    // MARK: - Sessions
+
+    /// Loads a session, applies `change`, stamps updatedAt and saves it. Call it before
+    /// the side effect the new stage describes. A transition canTransition refuses is
+    /// logged but still saved: the backend is the source of truth for done.
+    func updateSession(_ id: UUID, _ change: (inout SessionRecord) -> Void) {
+        guard var record = sessionStore.load(id) else {
+            debugLog("SessionStore: no record for \(id), update skipped")
+            return
+        }
+        let from = record.stage
+        change(&record)
+        if !canTransition(from: from, to: record.stage) {
+            debugLog("SessionStore: transition \(from.rawValue) -> \(record.stage.rawValue) refused by canTransition for \(id), saving anyway")
+        }
+        record.updatedAt = Date()
+        do {
+            try sessionStore.save(record)
+        } catch {
+            debugLog("SessionStore: save failed for \(id): \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Post-Recording Flow
 
-    func onRecordingComplete(phoneNumber: String, audioPath: String) {
+    func onRecordingComplete(sessionID: UUID, phoneNumber: String, audioPath: String) {
         NSLog("CallBridge: Recording complete: %@", audioPath)
         state = .showingDialog(phoneNumber: phoneNumber, audioPath: audioPath)
         updateStatusIcon()
@@ -635,7 +682,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         // Look up contact
         lookupContact(phone: phoneNumber) { [weak self] contact in
             DispatchQueue.main.async {
-                self?.showSaveDialog(phoneNumber: phoneNumber, audioPath: audioPath, contact: contact)
+                self?.showSaveDialog(sessionID: sessionID, phoneNumber: phoneNumber, audioPath: audioPath, contact: contact)
             }
         }
     }
@@ -685,8 +732,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }.resume()
     }
 
-    func sendToBackend(audioPath: String, phoneNumber: String, contact: ContactInfo?, direction: String = "Outbound") {
+    func sendToBackend(sessionID: UUID, audioPath: String, phoneNumber: String, contact: ContactInfo?, direction: String = "Outbound") {
         guard let url = URL(string: "\(serverURL)/process") else { return }
+        updateSession(sessionID) {
+            $0.stage = .uploading
+            $0.contactID = contact?.id
+            $0.contactType = contact?.type
+            $0.contactName = contact?.name
+            $0.direction = direction
+            $0.attempts += 1
+        }
         beginBackendWork()
 
         // Reading (possibly hundreds of MB) and building the body off the main thread.
@@ -694,6 +749,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             guard let fileData = FileManager.default.contents(atPath: audioPath), !fileData.isEmpty else {
                 DispatchQueue.main.async {
                     NSLog("CallBridge: Cannot read recording %@", audioPath)
+                    self.updateSession(sessionID) { $0.stage = .failed; $0.error = "opname niet leesbaar" }
                     self.showNotification(title: "CallBridge", message: "Fout: opname niet leesbaar")
                     self.endBackendWork()
                 }
@@ -709,6 +765,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             var body = Data()
             body.append(Self.multipartField("phone_number", phoneNumber, boundary: boundary))
             body.append(Self.multipartField("direction", direction, boundary: boundary))
+            body.append(Self.multipartField("client_ref", sessionID.uuidString, boundary: boundary))
             if let c = contact, let id = c.id {
                 body.append(Self.multipartField("salesforce_id", id, boundary: boundary))
                 body.append(Self.multipartField("salesforce_type", c.type, boundary: boundary))
@@ -731,7 +788,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
             URLSession.shared.uploadTask(with: request, from: body) { data, response, error in
                 let failure = Self.backendFailure(data, response, error)
+                let answer = Self.submitAnswer(data, response, error)
                 DispatchQueue.main.async {
+                    let stage = stageAfterSubmit(httpStatus: answer.httpStatus, bodyStatus: answer.bodyStatus, nno: false)
+                    self.updateSession(sessionID) {
+                        $0.stage = stage
+                        if stage == .failed { $0.error = failure ?? "onbekende fout" }
+                        if stage == .done { $0.taskID = answer.taskID }
+                    }
                     if let failure = failure {
                         NSLog("CallBridge: Backend error: %@", failure)
                         self.showNotification(title: "CallBridge", message: "Fout: \(failure) — opname bewaard")
@@ -747,9 +811,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
     // MARK: - Save Dialog
 
-    func showSaveDialog(phoneNumber: String, audioPath: String, contact: ContactInfo?) {
+    func showSaveDialog(sessionID: UUID, phoneNumber: String, audioPath: String, contact: ContactInfo?) {
         dismissDialog()
         let viewModel = SaveDialogViewModel(
+            sessionID: sessionID,
             phoneNumber: phoneNumber,
             audioPath: audioPath,
             initialContact: contact,
@@ -854,6 +919,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         d.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
         d.append("\(value)\r\n".data(using: .utf8)!)
         return d
+    }
+
+    /// The parts of a /process or /log-nno answer that decide the session stage:
+    /// HTTP status (nil on a transport error), the body's "status" and "task_id".
+    private static func submitAnswer(_ data: Data?, _ response: URLResponse?, _ error: Error?)
+        -> (httpStatus: Int?, bodyStatus: String?, taskID: String?) {
+        guard error == nil, let http = response as? HTTPURLResponse else { return (nil, nil, nil) }
+        var bodyStatus: String?
+        var taskID: String?
+        if let data = data,
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            bodyStatus = json["status"] as? String
+            taskID = (json["task_id"] as? String) ?? (json["nno_task_id"] as? String)
+        }
+        return (http.statusCode, bodyStatus, taskID)
     }
 
     /// Transport error or non-2xx → a human-readable failure; nil on success.

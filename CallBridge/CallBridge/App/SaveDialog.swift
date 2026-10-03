@@ -5,6 +5,8 @@ import Foundation
 // MARK: - SwiftUI View Model
 
 class SaveDialogViewModel: ObservableObject {
+    /// The persisted session this dialog decides on; sent to the backend as client_ref.
+    let sessionID: UUID
     let phoneNumber: String
     let audioPath: String
     weak var appDelegate: AppDelegate?
@@ -17,7 +19,8 @@ class SaveDialogViewModel: ObservableObject {
 
     private var searchTask: DispatchWorkItem?
 
-    init(phoneNumber: String, audioPath: String, initialContact: ContactInfo?, appDelegate: AppDelegate) {
+    init(sessionID: UUID, phoneNumber: String, audioPath: String, initialContact: ContactInfo?, appDelegate: AppDelegate) {
+        self.sessionID = sessionID
         self.phoneNumber = phoneNumber
         self.audioPath = audioPath
         self.selectedContact = initialContact
@@ -54,6 +57,7 @@ class SaveDialogViewModel: ObservableObject {
         isSending = true
         appDelegate.dialogFinished(audioPath: audioPath)
         appDelegate.sendToBackend(
+            sessionID: sessionID,
             audioPath: audioPath,
             phoneNumber: phoneNumber,
             contact: selectedContact
