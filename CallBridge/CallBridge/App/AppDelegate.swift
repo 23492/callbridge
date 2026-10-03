@@ -125,6 +125,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }
         updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             self?.updateChecker.checkForUpdate { self?.rebuildMenu() }
+            self?.pruneOldSessions()
         }
     }
 
@@ -365,6 +366,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             item.isEnabled = false
             menu.addItem(item)
             menu.addItem(NSMenuItem.separator())
+        }
+
+        // Failed sessions (D-04): only shown when there is at least one.
+        let records = sessionStore.list()
+        var failed = failedSessions(records)
+        let failedIDs = Set(failed.map { $0.id })
+        failed += staleNonTerminal(records, now: Date()).filter { !failedIDs.contains($0.id) }
+        if !failed.isEmpty {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "dd-MM HH:mm"
+            let failedItem = NSMenuItem(title: "Mislukt (\(failed.count))", action: nil, keyEquivalent: "")
+            let failedSubmenu = NSMenu()
+            for record in failed {
+                let who = (record.contactName?.isEmpty == false) ? record.contactName! : record.phoneNumber
+                let sessionItem = NSMenuItem(title: "\(who) — \(formatter.string(from: record.createdAt))", action: nil, keyEquivalent: "")
+                let actions = NSMenu()
+                let retryItem = NSMenuItem(title: "Opnieuw proberen", action: #selector(retryFailedSession(_:)), keyEquivalent: "")
+                retryItem.target = self
+                retryItem.representedObject = record.id.uuidString
+                actions.addItem(retryItem)
+                let deleteItem = NSMenuItem(title: "Verwijderen", action: #selector(deleteFailedSession(_:)), keyEquivalent: "")
+                deleteItem.target = self
+                deleteItem.representedObject = record.id.uuidString
+                actions.addItem(deleteItem)
+                sessionItem.submenu = actions
+                failedSubmenu.addItem(sessionItem)
+            }
+            failedItem.submenu = failedSubmenu
+            menu.addItem(failedItem)
         }
 
         // Recent recordings (collapsible submenu)
@@ -1182,6 +1212,76 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
         // Follow sessions that were still running on the backend when the app quit.
         scheduleSessionPolling()
+
+        pruneOldSessions()
+    }
+
+    /// D-03: terminal sessions older than 7 days are removed. Only the audio file the record
+    /// itself references is moved to the Trash, and only when it sits inside recordingsDir.
+    /// The folder is never listed here, so recordings without a session record are never
+    /// touched (Pitfall 10).
+    func pruneOldSessions() {
+        let dirPrefix = URL(fileURLWithPath: recordingsDir).standardizedFileURL.path + "/"
+        for record in sessionsToPrune(sessionStore.list(), now: Date()) {
+            if let path = record.audioPath {
+                let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+                if standardized.hasPrefix(dirPrefix) && FileManager.default.fileExists(atPath: standardized) {
+                    // D-03: succeeded and failed sessions alike; the Trash keeps it recoverable.
+                    trashRecording(standardized)
+                }
+            }
+            sessionStore.delete(record.id)
+        }
+    }
+
+    /// "Mislukt (n)" → "Opnieuw proberen": resend with the same session id, so the backend
+    /// ledger resumes where it stopped instead of writing twice.
+    @objc func retryFailedSession(_ sender: NSMenuItem) {
+        guard let idString = sender.representedObject as? String, let id = UUID(uuidString: idString),
+              let record = sessionStore.load(id) else { return }
+        guard let path = record.audioPath, FileManager.default.fileExists(atPath: path) else {
+            showNotification(title: "CallBridge", message: "Opname niet gevonden")
+            return
+        }
+        let target = retryStage(for: record)
+        updateSession(id) {
+            $0.stage = target
+            $0.error = nil
+        }
+        if target == .loggingNNO {
+            guard let contactID = record.contactID else {
+                updateSession(id) {
+                    $0.stage = .failed
+                    $0.error = "geen contact voor NNO"
+                }
+                showNotification(title: "CallBridge", message: "NNO kan niet opnieuw: geen contact")
+                return
+            }
+            let contact = ContactInfo(id: contactID, name: record.contactName ?? "", type: record.contactType ?? "Contact",
+                                      phone: nil, account_name: nil, account_id: nil)
+            sendNNO(sessionID: id, contact: contact, audioPath: path)
+        } else {
+            var contact: ContactInfo?
+            if record.contactID != nil || record.contactName != nil {
+                contact = ContactInfo(id: record.contactID, name: record.contactName ?? "", type: record.contactType ?? "Contact",
+                                      phone: nil, account_name: nil, account_id: nil)
+            }
+            sendToBackend(sessionID: id, audioPath: path, phoneNumber: record.phoneNumber,
+                          contact: contact, direction: record.direction ?? "Outbound")
+        }
+        rebuildMenu()
+    }
+
+    /// "Mislukt (n)" → "Verwijderen": the session's own recording goes to the Trash, then
+    /// the record is deleted.
+    @objc func deleteFailedSession(_ sender: NSMenuItem) {
+        guard let idString = sender.representedObject as? String, let id = UUID(uuidString: idString) else { return }
+        if let record = sessionStore.load(id), let path = record.audioPath,
+           FileManager.default.fileExists(atPath: path) {
+            trashRecording(path)
+        }
+        sessionStore.delete(id)
+        rebuildMenu()
     }
 
     /// Called by BackendSupervisor once /health answers for our process. Resends the
