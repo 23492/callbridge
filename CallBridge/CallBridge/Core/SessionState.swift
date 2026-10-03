@@ -179,3 +179,25 @@ func stageForBackend(stage: String, step: String?) -> SessionStage? {
 func retryStage(for record: SessionRecord) -> SessionStage {
     record.wasNNO ? .loggingNNO : .uploading
 }
+
+// MARK: - Retention
+
+/// D-03: session records and their audio are kept 7 days, for succeeded and failed sessions alike.
+let sessionRetention: TimeInterval = 7 * 24 * 3600
+
+/// Terminal records (done, failed, discarded) whose last update is at least `retention` ago.
+/// Non-terminal records are never returned. The caller deletes the record and moves only the
+/// audio file that record references to the Trash, never other files in the folder (Pitfall 10).
+func sessionsToPrune(_ records: [SessionRecord], now: Date,
+                     retention: TimeInterval = sessionRetention) -> [SessionRecord] {
+    records.filter { $0.stage.isTerminal && now.timeIntervalSince($0.updatedAt) >= retention }
+}
+
+/// Non-terminal sessions (other than recording, which resumeAction handles) that have not
+/// moved for `retention`. They are surfaced under "Mislukt" and never deleted automatically.
+func staleNonTerminal(_ records: [SessionRecord], now: Date,
+                      retention: TimeInterval = sessionRetention) -> [SessionRecord] {
+    records.filter {
+        !$0.stage.isTerminal && $0.stage != .recording && now.timeIntervalSince($0.updatedAt) >= retention
+    }
+}
