@@ -652,7 +652,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     /// relaunch: the recorder resumes polling with the persisted start time and folder
     /// snapshot, and when the file finishes the normal onFinished → finishRecording →
     /// save dialog path runs, as if nothing happened. Never starts a new capture.
-    /// No caller yet: plan 01-09 calls it from the launch resume.
+    /// Called from resumeSessionsOnLaunch.
     func reattachRecording(sessionID: UUID, phoneNumber: String, info: RecorderResumeInfo) {
         currentCallID = sessionID
         state = .recording(phoneNumber: phoneNumber, startTime: info.startTime, sessionID: sessionID)
@@ -1128,12 +1128,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     /// Resends wait in pendingResumes until the backend is healthy; none of them asks first.
     func resumeSessionsOnLaunch() {
         let now = Date()
+        var toReattach: [SessionRecord] = []
+        var awaitingDialog: [SessionRecord] = []
         for record in sessionStore.list() {
             switch resumeAction(for: record, now: now) {
             case .resendProcess, .resendNNO:
                 pendingResumes.append(record.id)
-            case .reattachRecorder, .showSaveDialog:
-                break
+            case .reattachRecorder:
+                toReattach.append(record)
+            case .showSaveDialog:
+                // A manual session is awaitingDecision from the moment "Verwerken" opens;
+                // closing that window is not a crash, so only calls get their dialog back.
+                if record.source == .call { awaitingDialog.append(record) }
             case .abandon(let reason):
                 // Any audio file stays on disk; retention handles it later (D-03).
                 updateSession(record.id) {
@@ -1144,6 +1150,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                 break
             }
         }
+
+        // D-02: only one call records at a time, so only the newest recording is re-attached.
+        // When its file finishes, onFinished → finishRecording → onRecordingComplete shows the
+        // normal save dialog, as if nothing happened. No notification, no new capture.
+        let recordingsNewestFirst = toReattach.sorted { $0.createdAt > $1.createdAt }
+        if let newest = recordingsNewestFirst.first, let info = newest.resumeInfo {
+            reattachRecording(sessionID: newest.id, phoneNumber: newest.phoneNumber, info: info)
+        }
+        for older in recordingsNewestFirst.dropFirst() {
+            updateSession(older.id) {
+                $0.stage = .discarded
+                $0.error = "vervangen door nieuwere opname"
+            }
+        }
+
+        // The recording had finished but no choice was made: show the dialog again for the
+        // newest such session, unless a call is being recorded now. Older ones stay
+        // awaitingDecision and remain reachable through "Recente opnames" (reusableSession).
+        if currentCallID == nil,
+           let newest = awaitingDialog.max(by: { $0.createdAt < $1.createdAt }) {
+            if let path = newest.audioPath, FileManager.default.fileExists(atPath: path) {
+                onRecordingComplete(sessionID: newest.id, phoneNumber: newest.phoneNumber, audioPath: path)
+            } else {
+                updateSession(newest.id) {
+                    $0.stage = .failed
+                    $0.error = "opname niet gevonden"
+                }
+            }
+        }
+
         // Follow sessions that were still running on the backend when the app quit.
         scheduleSessionPolling()
     }
