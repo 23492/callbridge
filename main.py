@@ -138,6 +138,8 @@ def log_dry_run_state() -> None:
 @app.on_event("startup")
 def start_seed_recent_calls():
     log_dry_run_state()
+    # Ledger pruning touches the disk only, but still never delays binding :8765.
+    threading.Thread(target=ledger.prune, name="ledger-prune", daemon=True).start()
     # In the background: a Salesforce login + queries here used to delay binding
     # :8765 by seconds, which the app's health checks read as a dead backend.
     threading.Thread(target=seed_recent_calls, name="seed-recent-calls", daemon=True).start()
@@ -426,6 +428,26 @@ def process_pipeline(
                 ledger.checkpoint(ref, status="failed", error=f"no contact for {phone_number}")
                 return
             resolved_type = contact.get("attributes", {}).get("type", "Contact")
+
+        # The same recording logged to the same record from another session is a
+        # duplicate (D-09). Only an entry that already wrote its call Task, or is
+        # running now, blocks: a stale entry that died before any write must not
+        # turn this recording into one that can never be logged.
+        target_id = contact.get("Id") or contact.get("AccountId")
+        if ref and audio_sha256 and is_valid_sf_id(target_id):
+            ledger.checkpoint(ref, target_id=target_id)
+            other = ledger.lookup_by_hash(audio_sha256, target_id)
+            other_entry = ledger.lookup(other) if other and other != ref else None
+            if other_entry and (other_entry.get("call_task_id") or ledger.in_flight(other)):
+                other_task_id = other_entry.get("call_task_id")
+                logger.info("Deduplicated recording %s for %s: same audio as client_ref %s", ref, target_id, other)
+                ledger.checkpoint(ref, status="done", step="done", duplicate_of=other, call_task_id=other_task_id)
+                if other_task_id:
+                    _complete_job(job_id, contact["Name"], target_id, resolved_type, other_task_id)
+                else:
+                    _fail_job(job_id)
+                return
+            ledger.link_hash(audio_sha256, target_id, ref)
 
         _update_job(job_id, contact_name=contact["Name"], step="transcribing")
         ledger.checkpoint(ref, step="transcribing")

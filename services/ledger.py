@@ -4,9 +4,9 @@ import os
 import re
 import tempfile
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from services.salesforce import dry_run_enabled
+from services.salesforce import dry_run_enabled, is_valid_sf_id
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 # client_ref becomes a filename: validate before any path is built (Pitfall 9).
 _CLIENT_REF_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+# Longer than the app's 7-day session retention (D-03), so any retry within
+# retention is still deduplicated.
+RETENTION_DAYS = 30
 
 SCHEMA_VERSION = 1
 
@@ -148,3 +153,90 @@ def release(ref: str | None) -> None:
 def in_flight(ref: str) -> bool:
     with _ledger_lock:
         return ref in _inflight
+
+
+# Secondary index: the same recording (audio SHA-256) logged to the same target
+# record from another session. The session id stays the primary key; a
+# different target never matches, so a deliberate pick of another contact
+# logs a new call.
+
+def _hash_path(sha256: str, target_id: str) -> str:
+    if not isinstance(sha256, str) or not _SHA256_RE.match(sha256):
+        raise ValueError(f"Invalid audio hash: {sha256!r}")
+    if not is_valid_sf_id(target_id):
+        raise ValueError(f"Invalid target id: {target_id!r}")
+    directory = os.path.join(_ledger_dir(), "by-hash")
+    os.makedirs(directory, mode=0o700, exist_ok=True)
+    return os.path.join(directory, f"{sha256}-{target_id}.json")
+
+
+def link_hash(sha256: str, target_id: str, ref: str) -> None:
+    """Point (sha256, target_id) at ref, replacing any earlier pointer."""
+    if not is_valid_client_ref(ref):
+        raise ValueError(f"Invalid client_ref: {ref!r}")
+    path = _hash_path(sha256, target_id)
+    with _ledger_lock:
+        _atomic_write(path, {"client_ref": ref})
+
+
+def lookup_by_hash(sha256: str, target_id: str) -> str | None:
+    data = _read_json(_hash_path(sha256, target_id))
+    if not isinstance(data, dict):
+        return None
+    ref = data.get("client_ref")
+    return ref if is_valid_client_ref(ref) else None
+
+
+def _parse_time(value) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _remove(path: str) -> None:
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
+def prune(now: datetime | None = None, max_age_days: int = RETENTION_DAYS) -> int:
+    """Remove entries (with their transcript and by-hash files) whose updated_at
+    is older than max_age_days, in the current namespace. Returns the number of
+    entries removed; never raises."""
+    try:
+        now = now or datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=max_age_days)
+        directory = _ledger_dir()
+        removed_refs = set()
+        with _ledger_lock:
+            for name in os.listdir(directory):
+                if not name.endswith(".json") or name.endswith(".transcript.json"):
+                    continue
+                ref = name[:-len(".json")]
+                if not is_valid_client_ref(ref) or ref in _inflight:
+                    continue
+                entry = _read_json(os.path.join(directory, name))
+                updated = _parse_time(entry.get("updated_at")) if isinstance(entry, dict) else None
+                if updated is None or updated >= cutoff:
+                    continue
+                _remove(os.path.join(directory, name))
+                _remove(os.path.join(directory, f"{ref}.transcript.json"))
+                removed_refs.add(ref)
+
+            hash_dir = os.path.join(directory, "by-hash")
+            if removed_refs and os.path.isdir(hash_dir):
+                for name in os.listdir(hash_dir):
+                    data = _read_json(os.path.join(hash_dir, name))
+                    if isinstance(data, dict) and data.get("client_ref") in removed_refs:
+                        _remove(os.path.join(hash_dir, name))
+        if removed_refs:
+            logger.info("Pruned %d ledger entries older than %d days", len(removed_refs), max_age_days)
+        return len(removed_refs)
+    except Exception as e:
+        logger.warning("Ledger prune failed (non-fatal): %s", e)
+        return 0
