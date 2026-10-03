@@ -90,6 +90,26 @@ def lookup(ref: str | None) -> dict | None:
     return entry if isinstance(entry, dict) else None
 
 
+def _transcript_path(ref: str) -> str:
+    if not is_valid_client_ref(ref):
+        raise ValueError(f"Invalid client_ref: {ref!r}")
+    return os.path.join(_ledger_dir(), f"{ref}.transcript.json")
+
+
+def save_transcript(ref: str | None, result: dict) -> None:
+    """Cache the transcription result, so a resume never pays AssemblyAI twice."""
+    if ref is None:
+        return
+    _atomic_write(_transcript_path(ref), result)
+
+
+def load_transcript(ref: str | None) -> dict | None:
+    if ref is None:
+        return None
+    result = _read_json(_transcript_path(ref))
+    return result if isinstance(result, dict) else None
+
+
 def checkpoint(ref: str | None, **fields) -> dict:
     """Merge fields into the entry for ref and write it atomically. Returns the entry.
 

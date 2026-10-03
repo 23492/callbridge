@@ -351,11 +351,10 @@ def create_call_log(
     return task_id
 
 
-def create_transcript_note(task_id: str, transcript: str) -> str:
+def create_transcript_content_note(transcript: str) -> str:
     """
-    Create a ContentNote with the full transcript and link it to the Task.
-
-    Returns the ContentNote ID.
+    Create a ContentNote with the full transcript. Returns the ContentNote ID,
+    which is also the ContentDocumentId used to link it.
     """
     today = datetime.now().strftime("%d %B %Y")
 
@@ -364,13 +363,14 @@ def create_transcript_note(task_id: str, transcript: str) -> str:
     html_content = "<p>" + html.escape(transcript, quote=False).replace("\n", "</p><p>") + "</p>"
     encoded = base64.b64encode(html_content.encode("utf-8")).decode("utf-8")
 
-    note_id = _sf_write("ContentNote", "create", {
+    return _sf_write("ContentNote", "create", {
         "Title": today,
         "Content": encoded,
     })
 
-    # ContentNote ID is also the ContentDocumentId for linking
-    # Link the note to the Task
+
+def link_note_to_task(note_id: str, task_id: str) -> None:
+    """Link a ContentNote (by its ContentDocumentId) to the Task."""
     _sf_write("ContentDocumentLink", "create", {
         "ContentDocumentId": note_id,
         "LinkedEntityId": task_id,
@@ -378,6 +378,16 @@ def create_transcript_note(task_id: str, transcript: str) -> str:
         "Visibility": "AllUsers",
     })
 
+
+def create_transcript_note(task_id: str, transcript: str) -> str:
+    """
+    Create a ContentNote with the full transcript and link it to the Task.
+
+    Two writes; the pipeline calls the halves separately so the ledger can
+    record the note before the link. Returns the ContentNote ID.
+    """
+    note_id = create_transcript_content_note(transcript)
+    link_note_to_task(note_id, task_id)
     logger.info("Created ContentNote %s linked to Task %s", note_id, task_id)
     return note_id
 

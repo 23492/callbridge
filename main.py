@@ -22,7 +22,8 @@ from services.salesforce import (
     resolve_provided_record,
     search_contacts,
     create_call_log,
-    create_transcript_note,
+    create_transcript_content_note,
+    link_note_to_task,
     create_action_task,
     create_nno_log,
     complete_due_followup_tasks,
@@ -429,9 +430,14 @@ def process_pipeline(
         _update_job(job_id, contact_name=contact["Name"], step="transcribing")
         ledger.checkpoint(ref, step="transcribing")
 
-        # 2. Transcribe audio via AssemblyAI
-        logger.info("Transcribing audio for %s...", contact["Name"])
-        result = transcribe_audio(audio_path)
+        # 2. Transcribe audio via AssemblyAI (a resume reuses the cached result)
+        result = ledger.load_transcript(ref)
+        if result is not None:
+            logger.info("Using cached transcript for client_ref %s", ref)
+        else:
+            logger.info("Transcribing audio for %s...", contact["Name"])
+            result = transcribe_audio(audio_path)
+            ledger.save_transcript(ref, result)
         transcript = result["full_text"]
 
         if not transcript.strip():
@@ -444,63 +450,94 @@ def process_pipeline(
         _update_job(job_id, step="summarizing")
         ledger.checkpoint(ref, step="summarizing")
 
-        # 3. Generate summary via Gemini. A failure here must not throw away a paid-for
-        # transcript: log the call anyway, with the transcript attached as usual.
-        logger.info("Generating summary...")
-        summary_ok = True
-        try:
-            summary = generate_summary(transcript)
-        except Exception as e:
-            logger.error("Summary generation failed (logging call without summary): %s", e, exc_info=True)
-            summary = f"Samenvatting mislukt ({e}). Zie het transcript in de bijlage."
-            summary_ok = False
+        entry = ledger.lookup(ref) or {}
+        if "summary" in entry:
+            # A resume reuses summary and actions, so an existing call Task never
+            # gets a different Description and Gemini is not paid twice.
+            logger.info("Using cached summary and actions for client_ref %s", ref)
+            summary = entry["summary"]
+            summary_ok = entry.get("summary_ok", True)
+            duration = entry.get("duration")
+            actions = entry.get("actions") or []
+            follow_up_date = entry.get("follow_up_date")
+            _update_job(job_id, step="extracting_actions")
+            ledger.checkpoint(ref, step="extracting_actions")
+        else:
+            # 3. Generate summary via Gemini. A failure here must not throw away a paid-for
+            # transcript: log the call anyway, with the transcript attached as usual.
+            logger.info("Generating summary...")
+            summary_ok = True
+            try:
+                summary = generate_summary(transcript)
+            except Exception as e:
+                logger.error("Summary generation failed (logging call without summary): %s", e, exc_info=True)
+                summary = f"Samenvatting mislukt ({e}). Zie het transcript in de bijlage."
+                summary_ok = False
 
-        # 4. Get call duration from AssemblyAI response
-        duration = result["audio_duration"]
+            # 4. Get call duration from AssemblyAI response
+            duration = result["audio_duration"]
 
-        _update_job(job_id, step="extracting_actions")
-        ledger.checkpoint(ref, step="extracting_actions")
+            _update_job(job_id, step="extracting_actions")
+            ledger.checkpoint(ref, step="extracting_actions")
 
-        # 5. Extract action items from summary
-        follow_up_date = None
-        actions = []
-        try:
-            actions = extract_action_items(summary) if summary_ok else []
-            for action in actions:
-                if action.get("is_follow_up_call") and action.get("due_date"):
-                    follow_up_date = action["due_date"]
-            logger.info("Extracted %d action items (follow-up: %s)", len(actions), follow_up_date)
-        except Exception as e:
-            logger.warning("Action item extraction failed (non-fatal): %s", e)
+            # 5. Extract action items from summary
+            follow_up_date = None
+            actions = []
+            try:
+                actions = extract_action_items(summary) if summary_ok else []
+                for action in actions:
+                    if action.get("is_follow_up_call") and action.get("due_date"):
+                        follow_up_date = action["due_date"]
+                logger.info("Extracted %d action items (follow-up: %s)", len(actions), follow_up_date)
+            except Exception as e:
+                logger.warning("Action item extraction failed (non-fatal): %s", e)
+
+            ledger.checkpoint(ref, summary=summary, summary_ok=summary_ok, duration=duration,
+                              actions=actions, follow_up_date=follow_up_date)
 
         _update_job(job_id, step="saving_to_salesforce")
         ledger.checkpoint(ref, step="saving_to_salesforce")
 
         # 6. Create Call Log in Salesforce (with follow-up date if found)
-        entry = ledger.lookup(ref)
-        if entry and entry.get("call_task_id"):
+        entry = ledger.lookup(ref) or {}
+        if entry.get("call_task_id"):
             task_id = entry["call_task_id"]
             logger.info("Call Task %s already exists for client_ref %s; not creating it again", task_id, ref)
         else:
             task_id = create_call_log(contact, summary, duration, direction, follow_up_date)
-            ledger.checkpoint(ref, call_task_id=task_id)
+            entry = ledger.checkpoint(ref, call_task_id=task_id)
 
         # The logged call satisfies any overdue follow-up reminder on the person.
         # Only now — after the call Task exists — so a failed transcription/summary
         # never silently closes a reminder without leaving a call record.
-        if contact.get("Id"):
+        if contact.get("Id") and not entry.get("followups_done"):
             complete_due_followup_tasks(contact["Id"])
+            entry = ledger.checkpoint(ref, followups_done=True)
 
-        # 7. Create transcript note and link to Task
-        create_transcript_note(task_id, transcript)
+        # 7. Create transcript note and link to Task (two checkpointed writes)
+        note_id = entry.get("note_id")
+        if not note_id:
+            note_id = create_transcript_content_note(transcript)
+            entry = ledger.checkpoint(ref, note_id=note_id)
+        if not entry.get("note_linked"):
+            link_note_to_task(note_id, task_id)
+            entry = ledger.checkpoint(ref, note_linked=True)
+            logger.info("Created ContentNote %s linked to Task %s", note_id, task_id)
 
-        # 8. Create separate tasks for non-follow-up action items
-        for action in actions:
-            if not action.get("is_follow_up_call"):
-                try:
-                    create_action_task(contact, action["description"], action.get("due_date"))
-                except Exception as e:
-                    logger.warning("Failed to create action task: %s", e)
+        # 8. Create separate tasks for non-follow-up action items. A failed one
+        # stays non-fatal and is not recorded, so a resume retries only it.
+        action_task_ids = dict(entry.get("action_task_ids") or {})
+        for index, action in enumerate(actions):
+            if action.get("is_follow_up_call"):
+                continue
+            key = str(index)
+            if key in action_task_ids:
+                continue
+            try:
+                action_task_ids[key] = create_action_task(contact, action["description"], action.get("due_date"))
+                ledger.checkpoint(ref, action_task_ids=action_task_ids)
+            except Exception as e:
+                logger.warning("Failed to create action task: %s", e)
 
         logger.info("Pipeline complete: %s (%s) -> Task %s", contact["Name"], phone_number, task_id)
         ledger.checkpoint(ref, status="done", step="done")
