@@ -26,6 +26,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     /// It is the persisted session id (sessions/<id>.json), sent to the backend as client_ref.
     var currentCallID: UUID?
     /// One JSON record per recording session; each stage is written before its side effect (FND-04).
+    /// Runs every 10 s only while a session waits on the backend.
+    var sessionPollTimer: Timer?
+    private var sessionPollInFlight = false
+    /// Stages the poller follows. Uploading is left out on purpose: until the multipart POST
+    /// arrives the backend has no ledger entry, and the upload's completion handler owns that step.
+    private let polledStages: Set<SessionStage> = [.transcribing, .logging, .loggingNNO]
     lazy var sessionStore = SessionStore(directory: URL(fileURLWithPath: (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/com.welisa.CallBridge/sessions")))
     var settingsWindow: NSWindow?
     var statusTimer: Timer?
@@ -108,6 +114,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
         // Check for unprocessed recordings on launch
         checkForOrphanedRecordings()
+
+        // Follow sessions that were still running on the backend when the app quit.
+        scheduleSessionPolling()
 
         // Update check (the repo is public, so the manifest is reachable). This only
         // surfaces "⬆ Update naar vX" in the menu when a NEWER signed version exists;
@@ -669,6 +678,76 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             try sessionStore.save(record)
         } catch {
             debugLog("SessionStore: save failed for \(id): \(error.localizedDescription)")
+        }
+        scheduleSessionPolling()
+    }
+
+    /// Starts the 10 s session poller while any session waits on the backend, and stops it
+    /// when none does. No polling when nothing is in flight.
+    func scheduleSessionPolling() {
+        let inFlight = sessionStore.list().contains { polledStages.contains($0.stage) }
+        if inFlight {
+            guard sessionPollTimer == nil else { return }
+            sessionPollTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+                self?.pollSessions()
+            }
+        } else {
+            sessionPollTimer?.invalidate()
+            sessionPollTimer = nil
+        }
+    }
+
+    /// Asks GET /sessions/{client_ref} about every session in polledStages and moves it to
+    /// what the backend reports. "unknown" and network errors leave the record alone
+    /// (01-09 resends on relaunch).
+    func pollSessions() {
+        guard !sessionPollInFlight else { return }
+        let records = sessionStore.list().filter { polledStages.contains($0.stage) }
+        guard !records.isEmpty else {
+            scheduleSessionPolling()
+            return
+        }
+        sessionPollInFlight = true
+        let group = DispatchGroup()
+        for record in records {
+            guard let url = URL(string: "\(serverURL)/sessions/\(record.id.uuidString)") else { continue }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 3
+            group.enter()
+            URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                var fetched: SessionStatusResponse?
+                if let error = error {
+                    debugLog("pollSessions: \(record.id) error: \(error.localizedDescription)")
+                } else if let data = data, let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) {
+                    do {
+                        fetched = try JSONDecoder().decode(SessionStatusResponse.self, from: data)
+                    } catch {
+                        debugLog("pollSessions: decode failed for \(record.id): \(error)")
+                    }
+                }
+                DispatchQueue.main.async {
+                    defer { group.leave() }
+                    guard let self = self, let fetched = fetched,
+                          let mapped = stageForBackend(stage: fetched.stage, step: fetched.step),
+                          let current = self.sessionStore.load(record.id),
+                          self.polledStages.contains(current.stage) else { return }
+                    // An NNO session only takes done or failed: it has no transcription or
+                    // logging step, and the backend refuses a call/NNO kind mix with 409.
+                    if current.wasNNO && mapped != .done && mapped != .failed {
+                        debugLog("pollSessions: ignoring backend stage \(mapped.rawValue) for NNO session \(record.id)")
+                        return
+                    }
+                    guard mapped != current.stage else { return }
+                    self.updateSession(record.id) {
+                        $0.stage = mapped
+                        if mapped == .done { $0.taskID = fetched.task_id ?? $0.taskID }
+                        if mapped == .failed { $0.error = fetched.error ?? "mislukt op de server" }
+                    }
+                }
+            }.resume()
+        }
+        group.notify(queue: .main) { [weak self] in
+            self?.sessionPollInFlight = false
         }
     }
 

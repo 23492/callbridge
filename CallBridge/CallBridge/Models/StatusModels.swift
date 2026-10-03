@@ -66,3 +66,12 @@ struct StatusResponse: Codable {
     let processing: [ProcessingJob]
     let completed: [CompletedJob]
 }
+
+/// GET /sessions/{client_ref}: where the backend stands on one app session.
+/// stage is unknown, processing, done or failed.
+struct SessionStatusResponse: Codable {
+    let stage: String
+    let step: String?
+    let task_id: String?
+    let error: String?
+}
