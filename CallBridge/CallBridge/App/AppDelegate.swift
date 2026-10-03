@@ -506,8 +506,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         // recording picked again gets a new one; the backend's audio hash + target check
         // then blocks it only for the same Salesforce record.
         let sessionID: UUID
-        if let open = reusableSession(forAudioPath: audioPath, in: sessionStore.list()) {
-            sessionID = open.id
+        if let existing = reusableSession(forAudioPath: audioPath, in: sessionStore.list()) {
+            sessionID = existing.id
         } else {
             var record = SessionRecord(source: .manual, phoneNumber: "", now: Date())
             record.audioPath = audioPath
