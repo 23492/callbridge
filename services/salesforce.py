@@ -1,5 +1,8 @@
 import base64
 import html
+import itertools
+import json
+import os
 import re
 import logging
 import threading
@@ -36,7 +39,84 @@ FOLLOWUP_SUBJECTS = ("Call back", "Follow up", "Check in")
 _FOLLOWUP_SUBJECTS_NORM = frozenset(s.strip().casefold() for s in FOLLOWUP_SUBJECTS)
 
 
-def _get_sf() -> Salesforce:
+def dry_run_enabled() -> bool:
+    """True when the backend runs in dry-run mode (FND-06).
+
+    Read on every call so tests can toggle it. Only the backend environment
+    variable switches it (D-05): no request parameter and no app setting.
+    """
+    return os.getenv("CALLBRIDGE_DRY_RUN") == "1"
+
+
+class DryRunWriteBlocked(RuntimeError):
+    """Raised when code tries to write to Salesforce in dry-run without _sf_write."""
+
+
+class _ReadOnlySObject:
+    """Wraps an SObject handle (sf.Task etc.) and refuses every write."""
+
+    _WRITE_OPS = frozenset(("create", "update", "upsert", "delete"))
+
+    def __init__(self, inner, name: str):
+        self._inner = inner
+        self._name = name
+
+    def __getattr__(self, attr):
+        if attr in self._WRITE_OPS:
+            raise DryRunWriteBlocked(
+                f"dry-run: direct {attr} on {self._name} blocked; writes must go through _sf_write"
+            )
+        return getattr(self._inner, attr)
+
+
+class _ReadOnlySalesforce:
+    """Second barrier in dry-run: reads (query, search, limits) pass through,
+    SObject handles (capitalised attributes such as Task) refuse writes."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        value = getattr(self._inner, name)
+        if name[:1].isupper():
+            return _ReadOnlySObject(value, name)
+        return value
+
+
+def _get_sf():
+    """Salesforce client for reads. In dry-run it is a read-only proxy."""
+    client = _raw_sf()
+    if dry_run_enabled():
+        return _ReadOnlySalesforce(client)
+    return client
+
+
+_dry_counter = itertools.count(1)
+
+
+def _sf_write(sobject: str, op: str, payload: dict, record_id: str | None = None) -> str:
+    """The only function that writes to Salesforce (D-08).
+
+    In dry-run it writes nothing and logs one line per would-be write with the
+    full payload (D-07), returning record_id for updates or a fake
+    DRYRUN-<sobject>-<n> id for creates. Otherwise it performs the create or
+    update on the real client and returns the record id.
+    """
+    if op not in ("create", "update"):
+        raise ValueError(f"unsupported Salesforce write op {op!r}")
+    if dry_run_enabled():
+        fake = record_id if op == "update" else f"DRYRUN-{sobject}-{next(_dry_counter):04d}"
+        logger.info("DRY-RUN %s %s %s %s", op, sobject, fake,
+                    json.dumps(payload, ensure_ascii=False, default=str))
+        return fake
+    api = getattr(_raw_sf(), sobject)
+    if op == "create":
+        return api.create(payload)["id"]
+    api.update(record_id, payload)
+    return record_id
+
+
+def _raw_sf() -> Salesforce:
     """Get or create the Salesforce connection (re-logs in after long idle)."""
     global _sf, _sf_last_used
     with _sf_lock:
@@ -240,8 +320,6 @@ def create_call_log(
 
     Returns the Task ID.
     """
-    sf = _get_sf()
-
     task_data = {
         "Subject": "Call",
         "Type": "Call",
@@ -268,8 +346,7 @@ def create_call_log(
     if account_id:
         task_data["WhatId"] = account_id
 
-    result = sf.Task.create(task_data)
-    task_id = result["id"]
+    task_id = _sf_write("Task", "create", task_data)
     logger.info("Created Task %s for contact %s (follow-up: %s)", task_id, contact["Name"], follow_up_date)
     return task_id
 
@@ -280,7 +357,6 @@ def create_transcript_note(task_id: str, transcript: str) -> str:
 
     Returns the ContentNote ID.
     """
-    sf = _get_sf()
     today = datetime.now().strftime("%d %B %Y")
 
     # ContentNote content must be base64-encoded HTML
@@ -288,15 +364,14 @@ def create_transcript_note(task_id: str, transcript: str) -> str:
     html_content = "<p>" + html.escape(transcript, quote=False).replace("\n", "</p><p>") + "</p>"
     encoded = base64.b64encode(html_content.encode("utf-8")).decode("utf-8")
 
-    note = sf.ContentNote.create({
+    note_id = _sf_write("ContentNote", "create", {
         "Title": today,
         "Content": encoded,
     })
-    note_id = note["id"]
 
     # ContentNote ID is also the ContentDocumentId for linking
     # Link the note to the Task
-    sf.ContentDocumentLink.create({
+    _sf_write("ContentDocumentLink", "create", {
         "ContentDocumentId": note_id,
         "LinkedEntityId": task_id,
         "ShareType": "V",
@@ -329,8 +404,6 @@ def create_action_task(
     Create a standalone action item Task in Salesforce.
     Returns the Task ID.
     """
-    sf = _get_sf()
-
     task_data = {
         "Subject": description[:255],
         "Status": "Not Started",
@@ -350,8 +423,7 @@ def create_action_task(
     if account_id:
         task_data["WhatId"] = account_id
 
-    result = sf.Task.create(task_data)
-    task_id = result["id"]
+    task_id = _sf_write("Task", "create", task_data)
     logger.info("Created action Task %s: %s (due: %s)", task_id, description, due_date)
     return task_id
 
