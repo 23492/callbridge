@@ -29,6 +29,7 @@ from services.salesforce import (
     ALLOWED_RECORD_TYPES,
     is_valid_sf_id,
     _get_user_id,
+    dry_run_enabled,
 )
 
 # Ensure log directory exists before opening FileHandler (D-12)
@@ -91,12 +92,19 @@ def _update_job(job_id: str, **kwargs):
             _processing_jobs[job_id].update(kwargs)
 
 
+def _display_name(name: str) -> str:
+    """Menu label: in dry-run the entry carries fake DRYRUN ids, so mark it."""
+    if dry_run_enabled():
+        return "[DRY-RUN] " + name
+    return name
+
+
 def _complete_job(job_id: str, contact_name: str, contact_id: str, contact_type: str, task_id: str):
     future_tasks = _fetch_future_tasks(contact_id)
     with _jobs_lock:
         _processing_jobs.pop(job_id, None)
         _completed_jobs.appendleft({
-            "contact_name": contact_name,
+            "contact_name": _display_name(contact_name),
             "contact_id": contact_id,
             "contact_type": contact_type,
             "task_id": task_id,
@@ -118,8 +126,15 @@ def _fail_job(job_id: str):
 app.mount("/dashboard", StaticFiles(directory=os.path.join(_base_dir, "dashboard"), html=True), name="dashboard")
 
 
+def log_dry_run_state() -> None:
+    """Make dry-run visible in the backend log at startup (checked before prod dry-runs)."""
+    if dry_run_enabled():
+        logger.warning("DRY-RUN active: no Salesforce writes")
+
+
 @app.on_event("startup")
 def start_seed_recent_calls():
+    log_dry_run_state()
     # In the background: a Salesforce login + queries here used to delay binding
     # :8765 by seconds, which the app's health checks read as a dead backend.
     threading.Thread(target=seed_recent_calls, name="seed-recent-calls", daemon=True).start()
@@ -163,7 +178,8 @@ def seed_recent_calls():
 @app.get("/health")
 def health():
     # pid/ppid let the app tell its own backend apart from an orphan holding :8765.
-    return {"status": "ok", "pid": os.getpid(), "ppid": os.getppid()}
+    # dry_run lets a caller confirm the mode before any step that could write.
+    return {"status": "ok", "pid": os.getpid(), "ppid": os.getppid(), "dry_run": dry_run_enabled()}
 
 
 class CredentialValidationRequest(BaseModel):
@@ -257,7 +273,7 @@ def log_nno(
     future_tasks = _fetch_future_tasks(salesforce_id)
     with _jobs_lock:
         _completed_jobs.appendleft({
-            "contact_name": contact["Name"],
+            "contact_name": _display_name(contact["Name"]),
             "contact_id": salesforce_id,
             "contact_type": salesforce_type,
             "task_id": nno_id,

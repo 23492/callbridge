@@ -388,10 +388,9 @@ def set_follow_up_date(task_id: str, follow_up_date: str):
     This triggers Salesforce automation to create a follow-up task.
     follow_up_date should be YYYY-MM-DD format.
     """
-    sf = _get_sf()
-    sf.Task.update(task_id, {
+    _sf_write("Task", "update", {
         "Auto_Generate_Follow_Up_Task__c": follow_up_date,
-    })
+    }, record_id=task_id)
     logger.info("Set follow-up date on Task %s for %s", task_id, follow_up_date)
 
 
@@ -498,7 +497,7 @@ def complete_due_followup_tasks(who_id: str) -> int:
             # Guard: exact whitelist match on the trimmed, case-folded subject.
             if (record.get("Subject") or "").strip().casefold() not in _FOLLOWUP_SUBJECTS_NORM:
                 continue
-            sf.Task.update(record["Id"], {"Status": "Completed"})
+            _sf_write("Task", "update", {"Status": "Completed"}, record_id=record["Id"])
             logger.info("Completed due follow-up Task %s ('%s') on %s", record["Id"], record.get("Subject"), who_id)
             completed += 1
         return completed
@@ -512,7 +511,6 @@ def create_nno_log(contact: dict) -> tuple[str, str]:
     Create a completed NNO call task and a follow-up 'Call back' task for the next day.
     Returns (nno_task_id, follow_up_task_id).
     """
-    sf = _get_sf()
     today = datetime.now().strftime("%Y-%m-%d")
     tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -534,8 +532,7 @@ def create_nno_log(contact: dict) -> tuple[str, str]:
     if account_id:
         nno_data["WhatId"] = account_id
 
-    result = sf.Task.create(nno_data)
-    nno_task_id = result["id"]
+    nno_task_id = _sf_write("Task", "create", nno_data)
     logger.info("Created NNO Task %s for %s", nno_task_id, contact.get("Name"))
 
     # This call satisfies any overdue follow-up reminder on the person.
@@ -556,8 +553,7 @@ def create_nno_log(contact: dict) -> tuple[str, str]:
     if account_id:
         follow_up_data["WhatId"] = account_id
 
-    result = sf.Task.create(follow_up_data)
-    follow_up_id = result["id"]
+    follow_up_id = _sf_write("Task", "create", follow_up_data)
     logger.info("Created follow-up Task %s for %s (due: %s)", follow_up_id, contact.get("Name"), tomorrow)
 
     return nno_task_id, follow_up_id
