@@ -35,6 +35,13 @@ QUERIES = {
 }
 
 
+def _temp_audio() -> str:
+    fd, path = tempfile.mkstemp(suffix=".m4a", prefix="test_calllog_")
+    with os.fdopen(fd, "wb") as f:
+        f.write(b"audio-1")
+    return path
+
+
 def _call_task_creates(fake):
     return [w for w in fake.writes()
             if w[:2] == ("create", "Task") and w[2].get("Log_Type__c") == "Sales Call"]
@@ -145,6 +152,71 @@ class SameSessionTwiceTest(LedgerTestCase):
         expected = os.path.join(os.environ["HOME"], "Library", "Application Support",
                                 "com.welisa.CallBridge")
         self.assertEqual(result, expected)
+
+
+class ResumeAfterFailureTest(LedgerTestCase):
+    actions = [
+        {"description": "Offerte sturen", "due_date": "2026-10-09", "is_follow_up_call": False},
+        {"description": "Demo plannen", "due_date": "2026-10-10", "is_follow_up_call": False},
+    ]
+
+    def test_note_failure_then_resend_creates_each_record_once(self):
+        self.fake.fail_next("ContentNote", "create")
+        self.post_and_run()
+        entry = ledger.lookup(REF1)
+        self.assertEqual(entry["status"], "failed")
+        self.assertTrue(entry.get("call_task_id"))
+        self.post_and_run()
+        self.assertEqual(len(_call_task_creates(self.fake)), 1, self.fake.writes())
+        self.assertEqual(len(_creates(self.fake, "ContentNote")), 1)
+        self.assertEqual(len(_creates(self.fake, "ContentDocumentLink")), 1)
+        self.assertEqual(self.mocks["transcribe"].call_count, 1)
+        self.assertEqual(ledger.lookup(REF1)["status"], "done")
+
+    def test_link_failure_then_resend_creates_one_note(self):
+        self.fake.fail_next("ContentDocumentLink", "create")
+        self.post_and_run()
+        self.assertEqual(ledger.lookup(REF1)["status"], "failed")
+        self.post_and_run()
+        self.assertEqual(len(_creates(self.fake, "ContentNote")), 1, self.fake.writes())
+        self.assertEqual(len(_creates(self.fake, "ContentDocumentLink")), 1)
+        self.assertEqual(len(_call_task_creates(self.fake)), 1)
+
+    def test_failed_action_task_is_retried_alone(self):
+        # First action Task succeeds, the second fails (non-fatal, run ends "done").
+        original = self.fake.Task.create
+        calls = {"n": 0}
+
+        def create(payload):
+            if payload.get("Status") == "Not Started":
+                calls["n"] += 1
+                if calls["n"] == 2:
+                    raise RuntimeError("injected failure on second action Task")
+            return original(payload)
+
+        with mock.patch.object(self.fake.Task, "create", side_effect=create):
+            self.post_and_run()
+        entry = ledger.lookup(REF1)
+        self.assertEqual(list(entry["action_task_ids"].keys()), ["0"])
+        # A failed action Task stays non-fatal (the session ends "done", so
+        # /process answers duplicate). A pipeline run for the same ref, the
+        # resume path, creates only the missing one.
+        self.assertEqual(entry["status"], "done")
+        main.process_pipeline(
+            "job-resume-actions", _temp_audio(), PHONE, direction="Outbound",
+            salesforce_id=CONTACT_ID, salesforce_type="Contact",
+            client_ref=REF1, audio_sha256=entry["audio_sha256"],
+        )
+        creates = _action_task_creates(self.fake)
+        self.assertEqual([w[2]["Subject"] for w in creates], ["Offerte sturen", "Demo plannen"])
+        self.assertEqual(len(_call_task_creates(self.fake)), 1)
+
+    def test_summary_is_cached_across_failure_and_resend(self):
+        self.fake.fail_next("ContentNote", "create")
+        self.post_and_run()
+        self.post_and_run()
+        self.assertEqual(self.mocks["summary"].call_count, 1)
+        self.assertEqual(self.mocks["extract"].call_count, 1)
 
 
 if __name__ == "__main__":
