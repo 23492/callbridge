@@ -604,6 +604,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }
     }
 
+    /// Re-attaches to a recording that was running when the app died (D-02). Used on
+    /// relaunch: the recorder resumes polling with the persisted start time and folder
+    /// snapshot, and when the file finishes the normal onFinished → finishRecording →
+    /// save dialog path runs, as if nothing happened. Never starts a new capture.
+    /// No caller yet: plan 01-09 calls it from the launch resume.
+    func reattachRecording(sessionID: UUID, phoneNumber: String, info: RecorderResumeInfo) {
+        currentCallID = sessionID
+        state = .recording(phoneNumber: phoneNumber, startTime: info.startTime, sessionID: sessionID)
+        updateStatusIcon()
+        recorder.resume(session: sessionID, info: info)
+        debugLog("Session: re-attached to recording \(sessionID)")
+    }
+
     /// Single exit point from .recording to the save dialog. Idempotent per call.
     /// The recorder has already stopped polling and Audio Hijack when it reports.
     private func finishRecording(callID: UUID, audioPath: String) {
