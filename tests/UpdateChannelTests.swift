@@ -1,5 +1,5 @@
-// Assertions for the update-channel rules in main.swift (section "Update Channel").
-// Run via scripts/test-update-channel.sh, which concatenates that section with this file.
+// Assertions for the update-channel rules in CallBridge/CallBridge/Core/UpdateChannel.swift.
+// Run via scripts/test-core.sh (or the scripts/test-update-channel.sh wrapper).
 import Foundation
 
 var failures = 0
