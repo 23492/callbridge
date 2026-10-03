@@ -273,5 +273,88 @@ class ResumeAfterFailureTest(LedgerTestCase):
         self.assertEqual(self.mocks["extract"].call_count, 1)
 
 
+def _task_creates_by_subject(fake, subject):
+    return [w for w in fake.writes()
+            if w[:2] == ("create", "Task") and w[2].get("Subject") == subject]
+
+
+class NnoIdempotencyTest(LedgerTestCase):
+    """D-10: /log-nno keyed by the same session id as /process."""
+
+    def log_nno(self, ref=REF1, sf_id=CONTACT_ID, sf_type="Contact"):
+        kwargs = {"salesforce_id": sf_id, "salesforce_type": sf_type, "client_ref": ref}
+        support.assert_no_param_defaults(self, kwargs)
+        return main.log_nno(**kwargs)
+
+    def test_same_ref_twice_creates_one_nno_and_one_callback(self):
+        first = self.log_nno()
+        second = self.log_nno()
+        task_creates = [w for w in self.fake.writes() if w[:2] == ("create", "Task")]
+        self.assertEqual(len(task_creates), 2, self.fake.writes())
+        self.assertEqual(len(_task_creates_by_subject(self.fake, "NNO")), 1)
+        self.assertEqual(len(_task_creates_by_subject(self.fake, "Call back")), 1)
+        self.assertEqual(second, {
+            "status": "ok",
+            "nno_task_id": first["nno_task_id"],
+            "follow_up_task_id": first["follow_up_task_id"],
+            "contact_name": "Jan Jansen",
+        })
+        entry = ledger.lookup(REF1)
+        self.assertEqual((entry["kind"], entry["status"]), ("nno", "done"))
+        self.assertEqual(entry["target_id"], CONTACT_ID)
+
+    def test_callback_failure_then_resend_creates_only_the_callback(self):
+        original = self.fake.Task.create
+        state = {"failed": False}
+
+        def create(payload):
+            if payload.get("Subject") == "Call back" and not state["failed"]:
+                state["failed"] = True
+                raise RuntimeError("injected failure on the call-back Task")
+            return original(payload)
+
+        with mock.patch.object(self.fake.Task, "create", side_effect=create):
+            with self.assertRaises(main.HTTPException) as cm:
+                self.log_nno()
+            self.assertEqual(cm.exception.status_code, 502)
+            entry = ledger.lookup(REF1)
+            self.assertEqual(entry["status"], "failed")
+            self.assertTrue(entry.get("nno_task_id"))
+            self.assertFalse(ledger.in_flight(REF1))
+            response = self.log_nno()
+        self.assertEqual(response["status"], "ok")
+        self.assertEqual(response["nno_task_id"], entry["nno_task_id"])
+        self.assertEqual(len(_task_creates_by_subject(self.fake, "NNO")), 1, self.fake.writes())
+        self.assertEqual(len(_task_creates_by_subject(self.fake, "Call back")), 1, self.fake.writes())
+        self.assertEqual(ledger.lookup(REF1)["status"], "done")
+
+    def test_without_client_ref_behaves_as_before(self):
+        self.log_nno(ref=None)
+        self.log_nno(ref=None)
+        self.assertEqual(len(_task_creates_by_subject(self.fake, "NNO")), 2, self.fake.writes())
+        self.assertEqual(len(_task_creates_by_subject(self.fake, "Call back")), 2, self.fake.writes())
+
+    def test_traversal_client_ref_is_rejected_with_400(self):
+        with self.assertRaises(main.HTTPException) as cm:
+            self.log_nno(ref="../x")
+        self.assertEqual(cm.exception.status_code, 400)
+        self.assertEqual(self.fake.writes(), [])
+
+    def test_call_kind_entry_is_rejected_with_409(self):
+        ledger.checkpoint(REF1, kind="call", status="done", call_task_id="FAKETas000000000001")
+        with self.assertRaises(main.HTTPException) as cm:
+            self.log_nno()
+        self.assertEqual(cm.exception.status_code, 409)
+        self.assertEqual(self.fake.writes(), [])
+
+    def test_in_flight_ref_is_rejected_with_409(self):
+        self.assertTrue(ledger.claim(REF1))
+        with self.assertRaises(main.HTTPException) as cm:
+            self.log_nno()
+        self.assertEqual(cm.exception.status_code, 409)
+        self.assertEqual(cm.exception.detail, "NNO wordt al verwerkt")
+        self.assertEqual(self.fake.writes(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
