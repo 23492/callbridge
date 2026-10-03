@@ -5,6 +5,7 @@ ledger starts empty and no real org or real state directory is touched.
 """
 
 import asyncio
+import hashlib
 import os
 import tempfile
 import unittest
@@ -152,6 +153,59 @@ class SameSessionTwiceTest(LedgerTestCase):
         expected = os.path.join(os.environ["HOME"], "Library", "Application Support",
                                 "com.welisa.CallBridge")
         self.assertEqual(result, expected)
+
+
+class InputValidationTest(LedgerTestCase):
+    def test_traversal_client_ref_is_rejected_with_400(self):
+        with self.assertRaises(main.HTTPException) as cm:
+            self.post(ref="../x")
+        self.assertEqual(cm.exception.status_code, 400)
+        self.assertEqual(self.fake.writes(), [])
+        self.assertFalse(os.path.exists(os.path.join(self.state_dir, "x.json")))
+
+
+class HashTargetGuardTest(LedgerTestCase):
+    def test_same_bytes_new_ref_same_contact_is_duplicate(self):
+        self.post_and_run(ref=REF1)
+        first_task = ledger.lookup(REF1)["call_task_id"]
+        self.post_and_run(ref=REF2)
+        self.assertEqual(len(_call_task_creates(self.fake)), 1, self.fake.writes())
+        entry = ledger.lookup(REF2)
+        self.assertEqual(entry["status"], "done")
+        self.assertEqual(entry["duplicate_of"], REF1)
+        self.assertEqual(entry["call_task_id"], first_task)
+        response, bg = self.post(ref=REF2)
+        self.assertEqual(response, {"status": "duplicate", "task_id": first_task})
+
+    def test_same_bytes_different_contact_logs_a_new_call(self):
+        self.post_and_run(ref=REF1, sf_id=CONTACT_ID)
+        self.post_and_run(ref=REF2, sf_id=CONTACT2_ID)
+        creates = _call_task_creates(self.fake)
+        self.assertEqual(len(creates), 2, self.fake.writes())
+        self.assertEqual({c[2]["WhoId"] for c in creates}, {CONTACT_ID, CONTACT2_ID})
+
+    def _other_processing_entry(self):
+        sha = hashlib.sha256(b"audio-1").hexdigest()
+        ledger.checkpoint(REF3, kind="call", status="processing", step="transcribing",
+                          audio_sha256=sha, target_id=CONTACT_ID)
+        ledger.link_hash(sha, CONTACT_ID, REF3)
+        return sha
+
+    def test_in_flight_other_ref_blocks(self):
+        self._other_processing_entry()
+        self.assertTrue(ledger.claim(REF3))
+        self.post_and_run(ref=REF1)
+        self.assertEqual(_call_task_creates(self.fake), [])
+        entry = ledger.lookup(REF1)
+        self.assertEqual((entry["status"], entry["duplicate_of"]), ("done", REF3))
+
+    def test_stale_processing_entry_does_not_block(self):
+        sha = self._other_processing_entry()
+        self.assertFalse(ledger.in_flight(REF3))
+        self.post_and_run(ref=REF1)
+        self.assertEqual(len(_call_task_creates(self.fake)), 1, self.fake.writes())
+        self.assertEqual(ledger.lookup_by_hash(sha, CONTACT_ID), REF1)
+        self.assertNotIn("duplicate_of", ledger.lookup(REF1))
 
 
 class ResumeAfterFailureTest(LedgerTestCase):
