@@ -26,6 +26,8 @@ from services.salesforce import (
     link_note_to_task,
     create_action_task,
     create_nno_log,
+    create_nno_task,
+    create_callback_task,
     complete_due_followup_tasks,
     fetch_my_open_future_tasks,
     ALLOWED_RECORD_TYPES,
@@ -258,21 +260,53 @@ def contact_search(
 def log_nno(
     salesforce_id: str = Form(...),
     salesforce_type: str = Form(...),
+    client_ref: str | None = Form(None),
 ):
     """
     Log an NNO (Niet opgenomen). Creates a completed NNO task and a
     follow-up 'Call back' task for the next day.
 
+    client_ref is the app's session id (D-10). With it, each write is
+    checkpointed in the ledger: a resend of a finished session returns the
+    stored ids, and a resend after a failure creates only what is missing.
+
     Sync (not async) on purpose: the Salesforce calls block, and an async handler
     would stall the event loop — and with it /health and /status — for seconds.
     """
-    try:
-        contact = resolve_provided_record(salesforce_id, salesforce_type)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    if client_ref is not None and not ledger.is_valid_client_ref(client_ref):
+        raise HTTPException(status_code=400, detail="Invalid client_ref")
 
-    logger.info("Logging NNO for %s (%s/%s)", contact["Name"], salesforce_type, salesforce_id)
-    nno_id, follow_up_id = create_nno_log(contact)
+    ref = client_ref
+    if ref is not None:
+        entry = ledger.lookup(ref)
+        if entry and entry.get("kind", "nno") != "nno":
+            logger.warning("Rejected /log-nno for client_ref %s: ledger entry is kind %s", ref, entry.get("kind"))
+            raise HTTPException(status_code=409, detail="client_ref hoort bij een ander soort sessie")
+        if entry and entry.get("status") == "done":
+            logger.info("Deduplicated /log-nno for client_ref %s", ref)
+            return {
+                "status": "ok",
+                "nno_task_id": entry.get("nno_task_id"),
+                "follow_up_task_id": entry.get("follow_up_task_id"),
+                "contact_name": entry.get("contact_name"),
+            }
+        if not ledger.claim(ref):
+            logger.info("client_ref %s: NNO is already being processed", ref)
+            raise HTTPException(status_code=409, detail="NNO wordt al verwerkt")
+
+    try:
+        try:
+            contact = resolve_provided_record(salesforce_id, salesforce_type)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        logger.info("Logging NNO for %s (%s/%s)", contact["Name"], salesforce_type, salesforce_id)
+        if ref is None:
+            nno_id, follow_up_id = create_nno_log(contact)
+        else:
+            nno_id, follow_up_id = _log_nno_checkpointed(ref, contact, salesforce_id)
+    finally:
+        ledger.release(ref)
 
     # NNO creates a follow-up task for tomorrow, so fetch future tasks
     future_tasks = _fetch_future_tasks(salesforce_id)
@@ -291,6 +325,41 @@ def log_nno(
         "follow_up_task_id": follow_up_id,
         "contact_name": contact["Name"],
     }
+
+
+def _log_nno_checkpointed(ref: str, contact: dict, salesforce_id: str) -> tuple[str, str]:
+    """The NNO writes for one session, each checkpointed on the line after it."""
+    try:
+        entry = ledger.checkpoint(ref, kind="nno", status="processing", step="saving_to_salesforce",
+                                  target_id=salesforce_id, contact_name=contact["Name"], error=None)
+
+        nno_id = entry.get("nno_task_id")
+        if nno_id:
+            logger.info("NNO Task %s already exists for client_ref %s; not creating it again", nno_id, ref)
+        else:
+            nno_id = create_nno_task(contact)
+            entry = ledger.checkpoint(ref, nno_task_id=nno_id)
+
+        # This call satisfies any overdue follow-up reminder on the person.
+        if not entry.get("followups_done"):
+            if contact.get("Id"):
+                complete_due_followup_tasks(contact["Id"])
+            entry = ledger.checkpoint(ref, followups_done=True)
+
+        follow_up_id = entry.get("follow_up_task_id")
+        if not follow_up_id:
+            follow_up_id = create_callback_task(contact)
+            entry = ledger.checkpoint(ref, follow_up_task_id=follow_up_id)
+
+        ledger.checkpoint(ref, status="done", step="done")
+        return nno_id, follow_up_id
+    except Exception as e:
+        logger.error("NNO logging failed for client_ref %s: %s", ref, e, exc_info=True)
+        try:
+            ledger.checkpoint(ref, status="failed", error=str(e))
+        except Exception as ledger_error:
+            logger.error("Could not record failure for client_ref %s: %s", ref, ledger_error)
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.post("/process")

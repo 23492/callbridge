@@ -516,15 +516,18 @@ def complete_due_followup_tasks(who_id: str) -> int:
         return 0
 
 
-def create_nno_log(contact: dict) -> tuple[str, str]:
-    """
-    Create a completed NNO call task and a follow-up 'Call back' task for the next day.
-    Returns (nno_task_id, follow_up_task_id).
-    """
-    today = datetime.now().strftime("%Y-%m-%d")
-    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+def _nno_who_what(contact: dict) -> dict:
+    fields = {}
+    if contact.get("Id"):
+        fields["WhoId"] = contact["Id"]
+    if contact.get("AccountId"):
+        fields["WhatId"] = contact["AccountId"]
+    return fields
 
-    # Completed NNO task
+
+def create_nno_task(contact: dict) -> str:
+    """Create the completed NNO call task for today. Returns its id."""
+    today = datetime.now().strftime("%Y-%m-%d")
     nno_data = {
         "Subject": "NNO",
         "Type": "Call",
@@ -533,23 +536,16 @@ def create_nno_log(contact: dict) -> tuple[str, str]:
         "Priority": "Normal",
         "ActivityDate": today,
     }
-
-    contact_id = contact.get("Id")
-    if contact_id:
-        nno_data["WhoId"] = contact_id
-
-    account_id = contact.get("AccountId")
-    if account_id:
-        nno_data["WhatId"] = account_id
+    nno_data.update(_nno_who_what(contact))
 
     nno_task_id = _sf_write("Task", "create", nno_data)
     logger.info("Created NNO Task %s for %s", nno_task_id, contact.get("Name"))
+    return nno_task_id
 
-    # This call satisfies any overdue follow-up reminder on the person.
-    if contact_id:
-        complete_due_followup_tasks(contact_id)
 
-    # Follow-up task for next day
+def create_callback_task(contact: dict) -> str:
+    """Create the open 'Call back' task for tomorrow. Returns its id."""
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     follow_up_data = {
         "Subject": "Call back",
         "Type": "Call",
@@ -557,13 +553,24 @@ def create_nno_log(contact: dict) -> tuple[str, str]:
         "Priority": "Normal",
         "ActivityDate": tomorrow,
     }
-
-    if contact_id:
-        follow_up_data["WhoId"] = contact_id
-    if account_id:
-        follow_up_data["WhatId"] = account_id
+    follow_up_data.update(_nno_who_what(contact))
 
     follow_up_id = _sf_write("Task", "create", follow_up_data)
     logger.info("Created follow-up Task %s for %s (due: %s)", follow_up_id, contact.get("Name"), tomorrow)
+    return follow_up_id
 
+
+def create_nno_log(contact: dict) -> tuple[str, str]:
+    """
+    Create a completed NNO call task and a follow-up 'Call back' task for the next day.
+    Returns (nno_task_id, follow_up_task_id).
+    """
+    nno_task_id = create_nno_task(contact)
+
+    # This call satisfies any overdue follow-up reminder on the person.
+    contact_id = contact.get("Id")
+    if contact_id:
+        complete_due_followup_tasks(contact_id)
+
+    follow_up_id = create_callback_task(contact)
     return nno_task_id, follow_up_id

@@ -160,7 +160,7 @@ class NnoDryRunTest(unittest.TestCase):
         support.patch_backend(self, self.fake)
 
     def _log_nno(self):
-        kwargs = {"salesforce_id": CONTACT_ID, "salesforce_type": "Contact"}
+        kwargs = {"salesforce_id": CONTACT_ID, "salesforce_type": "Contact", "client_ref": None}
         support.assert_no_param_defaults(self, kwargs)
         return main.log_nno(**kwargs)
 
