@@ -25,6 +25,9 @@ jobs:
       - name: Update-channel logic tests
         run: ./scripts/test-update-channel.sh
 
+      - name: Backend tests
+        run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/python -m unittest discover -s tests/python -t . -v
+
       - name: Build app
         working-directory: CallBridge
         run: swift build -c release
