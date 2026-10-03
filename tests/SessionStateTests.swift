@@ -141,5 +141,17 @@ check(staleNonTerminal([stuckRecording], now: now).isEmpty, "a stale recording i
 check(staleNonTerminal([rec(.uploading, updated: -(week - 1))], now: now).isEmpty, "uploading within 7 days is not stale")
 check(staleNonTerminal([doneOld], now: now).isEmpty, "terminal records are never stale")
 
+// Resume notification text (D-01)
+var named = rec(.uploading)
+named.contactName = "Jan Jansen"
+check(resumeNotificationText(for: named) == "Gesprek met Jan Jansen wordt alsnog verwerkt", "resumeNotificationText uses the contact name")
+var unnamed = rec(.uploading)
+unnamed.contactName = ""
+check(resumeNotificationText(for: unnamed) == "Gesprek met +31612345678 wordt alsnog verwerkt", "resumeNotificationText falls back to the phone number")
+var nnoResume = rec(.loggingNNO)
+nnoResume.wasNNO = true
+nnoResume.contactName = "Jan Jansen"
+check(resumeNotificationText(for: nnoResume) == "NNO voor Jan Jansen wordt alsnog gelogd", "resumeNotificationText for an NNO session")
+
 print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)

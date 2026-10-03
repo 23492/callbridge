@@ -28,6 +28,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     /// One JSON record per recording session; each stage is written before its side effect (FND-04).
     /// Runs every 10 s only while a session waits on the backend.
     var sessionPollTimer: Timer?
+    /// Sessions found mid-processing on launch, resent once the backend is healthy (D-01).
+    var pendingResumes: [UUID] = []
     private var sessionPollInFlight = false
     /// Stages the poller follows. Uploading is left out on purpose: until the multipart POST
     /// arrives the backend has no ledger entry, and the upload's completion handler owns that step.
@@ -112,11 +114,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }
 
 
-        // Check for unprocessed recordings on launch
-        checkForOrphanedRecordings()
-
-        // Follow sessions that were still running on the backend when the app quit.
-        scheduleSessionPolling()
+        // Resume every unfinished session at the stage where it stopped (FND-04, D-01, D-02).
+        resumeSessionsOnLaunch()
 
         // Update check (the repo is public, so the manifest is reachable). This only
         // surfaces "⬆ Update naar vX" in the menu when a NEWER signed version exists;
@@ -1123,23 +1122,72 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         Process.launchedProcess(launchPath: "/usr/bin/osascript", arguments: ["-e", script])
     }
 
-    func checkForOrphanedRecordings() {
-        let fm = FileManager.default
-        let files = (try? fm.contentsOfDirectory(atPath: recordingsDir)) ?? []
-        let extensions = ["mp3", "wav", "m4a", "aiff"]
-        let oneHourAgo = Date().addingTimeInterval(-3600)
+    // MARK: - Launch Resume
 
-        for file in files {
-            let ext = (file as NSString).pathExtension.lowercased()
-            guard extensions.contains(ext) else { continue }
+    /// Every non-terminal session found on launch resumes at its stage (D-01, D-02).
+    /// Resends wait in pendingResumes until the backend is healthy; none of them asks first.
+    func resumeSessionsOnLaunch() {
+        let now = Date()
+        for record in sessionStore.list() {
+            switch resumeAction(for: record, now: now) {
+            case .resendProcess, .resendNNO:
+                pendingResumes.append(record.id)
+            case .reattachRecorder, .showSaveDialog:
+                break
+            case .abandon(let reason):
+                // Any audio file stays on disk; retention handles it later (D-03).
+                updateSession(record.id) {
+                    $0.stage = .discarded
+                    $0.error = reason
+                }
+            case .none:
+                break
+            }
+        }
+        // Follow sessions that were still running on the backend when the app quit.
+        scheduleSessionPolling()
+    }
 
-            let fullPath = (recordingsDir as NSString).appendingPathComponent(file)
-            guard let attrs = try? fm.attributesOfItem(atPath: fullPath),
-                  let modDate = attrs[.modificationDate] as? Date,
-                  modDate > oneHourAgo else { continue }
-
-            NSLog("CallBridge: Found orphaned recording: %@", file)
-            // Could show a dialog here — for now just log it
+    /// Called by BackendSupervisor once /health answers for our process. Resends the
+    /// sessions queued by resumeSessionsOnLaunch with their own id as client_ref; the
+    /// backend ledger skips writes that already happened and answers duplicate when done.
+    func backendBecameHealthy() {
+        let ids = pendingResumes
+        pendingResumes.removeAll()
+        for id in ids {
+            guard let record = sessionStore.load(id) else { continue }
+            // Re-evaluated here: the poller may already have moved it to done or failed.
+            let action = resumeAction(for: record, now: Date())
+            guard action == .resendProcess || action == .resendNNO else { continue }
+            guard let path = record.audioPath, FileManager.default.fileExists(atPath: path) else {
+                updateSession(id) {
+                    $0.stage = .failed
+                    $0.error = "opname niet gevonden"
+                }
+                continue
+            }
+            if action == .resendNNO {
+                guard let contactID = record.contactID else {
+                    updateSession(id) {
+                        $0.stage = .failed
+                        $0.error = "geen contact voor NNO"
+                    }
+                    continue
+                }
+                let contact = ContactInfo(id: contactID, name: record.contactName ?? "", type: record.contactType ?? "Contact",
+                                          phone: nil, account_name: nil, account_id: nil)
+                showNotification(title: "CallBridge", message: resumeNotificationText(for: record))
+                sendNNO(sessionID: id, contact: contact, audioPath: path)
+            } else {
+                var contact: ContactInfo?
+                if record.contactID != nil || record.contactName != nil {
+                    contact = ContactInfo(id: record.contactID, name: record.contactName ?? "", type: record.contactType ?? "Contact",
+                                          phone: nil, account_name: nil, account_id: nil)
+                }
+                showNotification(title: "CallBridge", message: resumeNotificationText(for: record))
+                sendToBackend(sessionID: id, audioPath: path, phoneNumber: record.phoneNumber,
+                              contact: contact, direction: record.direction ?? "Outbound")
+            }
         }
     }
 }

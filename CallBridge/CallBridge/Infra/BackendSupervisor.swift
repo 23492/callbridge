@@ -183,6 +183,7 @@ class BackendSupervisor {
                         if let appDelegate = NSApp.delegate as? AppDelegate {
                             appDelegate.serverReachable = true
                             appDelegate.rebuildMenu()
+                            appDelegate.backendBecameHealthy()
                         }
                     }
                 } else if attempt < maxAttempts {

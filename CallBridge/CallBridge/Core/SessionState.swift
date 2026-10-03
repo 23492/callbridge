@@ -150,6 +150,19 @@ func resumeAction(for record: SessionRecord, now: Date) -> ResumeAction {
     }
 }
 
+/// D-01: the notification shown when a session is resent on relaunch. Uses the contact
+/// name when known, the phone number otherwise.
+func resumeNotificationText(for record: SessionRecord) -> String {
+    let who: String
+    if let name = record.contactName, !name.isEmpty {
+        who = name
+    } else {
+        who = record.phoneNumber
+    }
+    if record.wasNNO { return "NNO voor \(who) wordt alsnog gelogd" }
+    return "Gesprek met \(who) wordt alsnog verwerkt"
+}
+
 /// D-04: sessions for the "Mislukt (n)" submenu, newest first.
 func failedSessions(_ records: [SessionRecord]) -> [SessionRecord] {
     records.filter { $0.stage == .failed }.sorted { $0.createdAt > $1.createdAt }
