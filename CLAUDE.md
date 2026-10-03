@@ -32,7 +32,7 @@ Three-tier system: macOS app (Swift) → Python backend (FastAPI) → Salesforce
 
 # Build the Swift app
 
-cd CallBridge && swiftc -o CallBridge.app/Contents/MacOS/CallBridge CallBridge/main.swift -framework Cocoa -framework SwiftUI
+cd CallBridge && swift build -c release && cp .build/release/CallBridge CallBridge.app/Contents/MacOS/CallBridge
 
 # Deploy: kill running instance, remove old app, copy fresh (cp -R alone won't overwrite the binary)
 
@@ -122,7 +122,7 @@ CallBridge is Kiran's macOS menu-bar app that records sales conversations and lo
 
 ## Languages
 
-- Swift (swift-tools-version 5.9) - The macOS menu-bar app, all in one file: `CallBridge/CallBridge/main.swift` (~2,690 lines). Also the release signing script `sign-update.swift` and the test harness `tests/UpdateChannelTests.swift`.
+- Swift (swift-tools-version 5.9) - The macOS menu-bar app: one SwiftPM target split over files under `CallBridge/CallBridge/` (`main.swift` keeps the imports, the version block and the entry point; Foundation-only logic lives in `Core/`). Also the release signing script `sign-update.swift` and the test harness `tests/UpdateChannelTests.swift`.
 - Python 3.10+ - FastAPI backend: `main.py`, `config.py`, `services/salesforce.py`, `services/summarizer.py`, `services/transcription.py`. PEP 604 unions (`str | None`) and builtin generics (`dict[str, dict]`, `list[dict]`) in `main.py` and `services/*.py` set the 3.10 floor. README states "Python 3.10+" (`README.md`).
 - Bash - Build/release and test scripts: `build-release.sh`, `scripts/test-backend-bundle.sh`, `scripts/test-update-channel.sh`. The app also writes and runs a bash relaunch trampoline at update time (`replaceAndRelaunch` in `CallBridge/CallBridge/main.swift`).
 - HTML/vanilla JavaScript - Manual-upload dashboard, no framework or CDN: `dashboard/index.html` (calls `fetch('/health')` and `fetch('/process-manual')`).
@@ -152,7 +152,7 @@ CallBridge is Kiran's macOS menu-bar app that records sales conversations and lo
 - CryptoKit - `Curve25519.Signing` Ed25519 verification of update zips (`verifySignature`) and signing in `sign-update.swift`.
 - Security framework - Keychain generic-password storage (`KeychainHelper`, service `com.welisa.CallBridge`).
 - AVFoundation - `AVAudioPlayer` playback in the manual-process window (`ManualProcessViewModel`).
-- No test framework (no XCTest, no pytest). Swift update-channel logic is tested by a custom assertion harness: `tests/UpdateChannelTests.swift`, compiled with `swiftc` by `scripts/test-update-channel.sh` (extracts the `// MARK: - Update Channel` section of `main.swift`; runs on macOS or Linux).
+- No test framework (no XCTest, no pytest). Swift logic in `CallBridge/CallBridge/Core/` is tested by a custom assertion harness: each `tests/*Tests.swift` is compiled by `scripts/test-core.sh` against `Core/*.swift` (one binary per test file, no MARK extraction; runs on macOS or Linux). `scripts/test-update-channel.sh` is a wrapper that runs `tests/UpdateChannelTests.swift` through it.
 - Backend bundle integration test: `scripts/test-backend-bundle.sh` (builds the PyInstaller bundle, hits `/health`, `/contact-search`, `/process` with credentials stripped so nothing is written to Salesforce).
 - SwiftPM `swift build -c release` (`build-release.sh`, `.github/workflows/build.yml`).
 - PyInstaller (unpinned, installed at build time) with `callbridge-server.spec`: hidden imports for uvicorn runtime modules, `multipart`, `fastapi`, `simple_salesforce`, `dotenv`; excludes tkinter/matplotlib/numpy/PIL/scipy; `upx=True`; bundles `dashboard/`.
@@ -205,15 +205,15 @@ CallBridge is Kiran's macOS menu-bar app that records sales conversations and lo
 
 ## Naming Patterns
 
-- Swift app is a single file: `CallBridge/CallBridge/main.swift` (2689 lines). New Swift code goes into this file under a `// MARK: -` section, not into new files (the SwiftPM target in `CallBridge/Package.swift` and the `swiftc` one-liner in `CLAUDE.md` both assume one source file; `scripts/test-update-channel.sh` extracts sections from it by MARK name).
+- The Swift app is one SwiftPM target (`CallBridge/Package.swift`) split over files under `CallBridge/CallBridge/`: `Core/` for Foundation-only logic tested by `scripts/test-core.sh`, plus `Infra/`, `Models/`, `App/` and `Capture/`. `main.swift` keeps only the imports, the version block and the entry point. New pure logic goes into `Core/` with a `tests/<Name>Tests.swift` file.
 - Python modules: lowercase snake_case nouns: `main.py`, `config.py`, `services/salesforce.py`, `services/transcription.py`, `services/summarizer.py`.
 - Shell scripts: kebab-case with a verb prefix: `build-release.sh`, `scripts/test-update-channel.sh`, `scripts/test-backend-bundle.sh`.
 - Swift test files: PascalCase + `Tests` suffix: `tests/UpdateChannelTests.swift`.
 - Python: snake_case verbs (`find_contact_by_phone`, `create_call_log`, `transcribe_audio`, `generate_summary`). Module-private helpers get a leading underscore (`_get_sf`, `_soql_str`, `_sanitize_phone`, `_normalize_record`, `_post_gemini`, `_extract_text`, `_notify_error` in `main.py`).
-- Swift: lowerCamelCase verbs (`checkForUpdate`, `downloadAndApply`, `verifySignature`, `lookupContact`, `sendToBackend`, `contactSearchURL`). Pure logic is written as free functions so it can be tested without Cocoa: `decideUpdate(installed:buildChannel:selected:stableManifest:betaManifest:)` and `xmlEscape(_:)` in `main.swift`.
+- Swift: lowerCamelCase verbs (`checkForUpdate`, `downloadAndApply`, `verifySignature`, `lookupContact`, `sendToBackend`, `contactSearchURL`). Pure logic is written as free functions so it can be tested without Cocoa: `decideUpdate(installed:buildChannel:selected:stableManifest:betaManifest:)` in `Core/UpdateChannel.swift` and `xmlEscape(_:)` in `main.swift`.
 - Python: snake_case locals. Module-level constants UPPER_SNAKE (`ASSEMBLY_URL`, `MAX_RETRIES`, `GEMINI_TIMEOUT`, `FOLLOWUP_SUBJECTS`, `ALLOWED_RECORD_TYPES`). Private module constants and mutable singletons get a leading underscore (`_SF_IDLE_RELOGIN_SECONDS`, `_SF_ID_RE`, `_sf`, `_sf_lock`, `_jobs_lock`, `_processing_jobs`, `_completed_jobs`, `_ALLOWED_ORIGINS`).
 - Swift: lowerCamelCase (`statusItem`, `recordingsDir`, `currentCallID`, `pendingRestart`). Top-level constants use `let` with lowerCamelCase (`appVersion`, `appBuildChannel`, `updatePublicKey`, `debugLogPath`).
-- `let appVersion = "..."` and `let appBuildChannel = "..."` at the top of `main.swift` must keep that exact shape on one line: `build-release.sh` rewrites them with `sed`, and `scripts/test-update-channel.sh` extracts them with `grep -E '^let (appVersion|appBuildChannel) = '`.
+- `let appVersion = "..."` and `let appBuildChannel = "..."` at the top of `main.swift` must keep that exact shape on one line at column 0: `build-release.sh` rewrites them with `sed`, `scripts/test-core.sh` copies them into its stub file with `grep -E '^let (appVersion|appBuildChannel) = '`, and `scripts/check-source-markers.sh` guards both (one line each, simulated sed changes exactly 2 lines).
 - Swift structs/classes/enums: PascalCase (`ContactInfo`, `ProcessingJob`, `UpdateChecker`, `KeychainHelper`, `BackendSupervisor`, `SaveDialogViewModel`). Enum cases lowerCamelCase (`.idle`, `.recording(...)`, `.returnToStable(String)`).
 - Swift `Codable` structs that mirror backend JSON keep the backend's snake_case property names (`account_name`, `job_id`, `task_id`, `future_tasks` in `ContactInfo`, `ProcessingJob`, `CompletedJob`); no `CodingKeys` are used. Keep JSON field names identical on both sides.
 - View models: `<Feature>ViewModel` subclassing `ObservableObject` with `@Published` properties (`SettingsViewModel`, `SaveDialogViewModel`, `ManualProcessViewModel`); views: `<Feature>View` with `@ObservedObject var viewModel`.
@@ -263,7 +263,7 @@ CallBridge is Kiran's macOS menu-bar app that records sales conversations and lo
 - Python: triple-quoted docstrings on public functions and non-obvious helpers, describing purpose, return shape and edge rules (`transcribe_audio`, `_normalize_due_date`, `_post_gemini`). No parameter-by-parameter sections.
 - Swift: `///` doc comments on types and properties whose purpose is not obvious (`UpdateChannel`, `AppVersion`, `UpdateDecision`, `AppDelegate.currentCallID`, `appBuildChannel`).
 - Organize Swift with `// MARK: - Section` headers (Version & Update Config, Debug Logging, Data Models, Status Models, Update Channel, Update Manifest, Update Checker, Keychain, Backend Supervisor, Call State Machine, Settings, App Delegate, SwiftUI View Model, SwiftUI Views, Manual Process View Model, Manual Process View, App Entry Point). Nested `// MARK: -` inside `AppDelegate` group methods (URL Handler, Audio Hijack Control, Polling, Server Communication, Save Dialog, Utilities).
-- The `// MARK: - Update Channel` and `// MARK: - Update Manifest` headers are load-bearing: the test script extracts everything between them. Keep only pure, Foundation-only code in that section.
+- `Core/*.swift` may import only Foundation (enforced by `scripts/check-source-markers.sh`). MARK headers stay for navigation, but nothing parses them.
 
 ## Function Design
 
@@ -315,7 +315,7 @@ CallBridge is Kiran's macOS menu-bar app that records sales conversations and lo
 
 ## Pattern Overview
 
-- Client logic lives in one Swift file organized by `// MARK: -` sections. Some MARK markers are load-bearing (see Architectural Constraints).
+- Client logic is split over files under `CallBridge/CallBridge/` (`Core/`, `Infra/`, `Models/`, `App/`, `Capture/`), with Foundation-only logic in `Core/`. `main.swift` keeps the version block and the entry point (see Architectural Constraints).
 - The app talks to the backend only over HTTP on `localhost:8765`; credentials pass via environment variables at spawn time, read from the Keychain (`main.swift` L615-623).
 - Recording is delegated to a third-party app (Audio Hijack) controlled by writing JavaScript `.ahcommand` files and opening them with Audio Hijack. Call end is inferred by polling a folder plus a state file Audio Hijack writes back.
 - Backend processing is fire-and-forget: `/process` returns immediately and runs `process_pipeline` as a FastAPI `BackgroundTasks` job; the app learns results only through `/status` when the menu opens, and through `osascript` notifications posted by the backend.
@@ -390,14 +390,14 @@ CallBridge is Kiran's macOS menu-bar app that records sales conversations and lo
 - Triggers: `BackendSupervisor.spawnLocked` (`main.swift` L593-667).
 - `build-release.sh <version>`: rewrites `appVersion`/`appBuildChannel`, Info.plist, `swift build -c release`, PyInstaller, ad-hoc codesign, zip, `swift sign-update.swift`, writes `callbridge-update.json`.
 - `.github/workflows/release.yml`: `workflow_dispatch`, stable only from `main`, `-beta.N` only from `beta`; publishes GitHub Release (beta as prerelease) including `audio-hijack/Voice Chat.ah4session`.
-- `.github/workflows/build.yml`: on push to `beta` and PRs: `scripts/test-update-channel.sh` then `swift build -c release`.
+- `.github/workflows/build.yml`: on push to `beta` and PRs: `scripts/check-source-markers.sh` (marker guard), `scripts/test-core.sh` (Core tests), `! scripts/test-core.sh tests/fixtures/AlwaysFailsTests.swift` (negative control), `scripts/test-update-channel.sh`, then `swift build -c release`.
 
 ## Architectural Constraints
 
 - **Threading (Swift):** `AppDelegate` state is main-thread only; network completions hop back with `DispatchQueue.main.async`. Blocking work is pushed to global queues: Keychain reads (L1198), file stability check (L1757), multipart body build (L1879). `BackendSupervisor` serializes everything on its own queue and asserts with `dispatchPrecondition` (L594, L724). `stop()` blocks the main thread up to 3 s during quit (L747-748).
 - **Threading (Python):** sync route handlers run in the FastAPI threadpool; `/log-nno` is sync on purpose so Salesforce calls do not block the event loop (`main.py` L245-247). `/process` and `/process-manual` are `async` only to read the upload, then schedule the sync pipeline as a background task.
 - **Global state:** Swift globals `appVersion`, `appBuildChannel`, `updatePublicKey`, `debugLogPath` (L10-17), `app`/`delegate` (L2686-2687). Python: `_processing_jobs`, `_completed_jobs`, `_jobs_lock` (`main.py` L78-80); `_sf`, `_sf_last_used`, `_user_id` (`services/salesforce.py`).
-- **Load-bearing text markers:** `build-release.sh` rewrites lines matching `^let appVersion = ".*"` and `^let appBuildChannel = ".*"`. `scripts/test-update-channel.sh` extracts the code between `// MARK: - Update Channel` and `// MARK: - Update Manifest` with `awk` and compiles it without Cocoa. Keep those two declarations at column 0 and keep everything between those markers Foundation-only.
+- **Version lines:** `build-release.sh` rewrites `^let appVersion = ".*"` and `^let appBuildChannel = ".*"` in `main.swift`. Both stay one line at column 0 in `main.swift`; `scripts/check-source-markers.sh` guards them. `scripts/test-update-channel.sh` runs `scripts/test-core.sh` against `Core/UpdateChannel.swift` (no awk, no MARK range).
 - **Fixed port and paths:** backend `127.0.0.1:8765` (hard-coded in `AppDelegate.serverURL` L1040, supervisor health URL L827, `main.py` L61 and L477); recordings `~/Auto Logger Recordings`; logs `~/Library/Logs/CallBridge/{backend.log,call_logger.log}`; debug log `/tmp/callbridge_debug.log`.
 - **Bundle layout:** executable must be at `Contents/Resources/callbridge-server/callbridge-server` (PyInstaller `--onedir`, `main.swift` L557-562).
 - **Platform:** macOS 13+ (`CallBridge/Package.swift`, Info.plist `LSMinimumSystemVersion`), `LSUIElement = true`, not sandboxed, ad-hoc signed.
@@ -438,7 +438,7 @@ CallBridge is Kiran's macOS menu-bar app that records sales conversations and lo
 ### Backend supervisor and updater (stable infrastructure)
 
 - `BackendSupervisor` (L521-848) and `UpdateChecker` (L242-448) have no dependency on the recorder or trigger. They move to their own files unchanged; only the `NSApp.delegate as? AppDelegate` callback (L699-716) couples the supervisor to the app.
-- `UpdateChannel`/`AppVersion`/`decideUpdate` (L140-231) must stay Foundation-only. If moved out of `main.swift`, update `scripts/test-update-channel.sh` (it `awk`s the MARK range from `main.swift`) in the same change.
+- `UpdateChannel`/`AppVersion`/`decideUpdate` live in `Core/UpdateChannel.swift` and stay Foundation-only (`scripts/check-source-markers.sh` fails on any other import).
 
 ## Error Handling
 

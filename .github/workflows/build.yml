@@ -13,6 +13,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Source marker guard
+        run: ./scripts/check-source-markers.sh
+
+      - name: Core tests
+        run: ./scripts/test-core.sh
+
+      - name: Core runner fails on a failing test
+        run: '! ./scripts/test-core.sh tests/fixtures/AlwaysFailsTests.swift'
+
       - name: Update-channel logic tests
         run: ./scripts/test-update-channel.sh
 
