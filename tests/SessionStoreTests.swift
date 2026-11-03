@@ -53,6 +53,40 @@ store.delete(record.id)
 check(store.load(record.id) == nil, "delete removes the record")
 check(store.list().isEmpty, "list is empty after delete")
 
+// Phase 3 DSH fields survive a round trip
+var dshRecord = SessionRecord(source: .call, phoneNumber: "+31687654321", now: t0)
+dshRecord.stage = .awaitingAccount
+dshRecord.route = .dsh
+dshRecord.dshAccepted = true
+dshRecord.dshTest = true
+dshRecord.nextAttemptAt = t0.addingTimeInterval(60)
+dshRecord.duplicateOf = "11111111-2222-3333-4444-555555555555"
+dshRecord.cockpitStep = "waiting_for_account"
+try? store.save(dshRecord)
+let dshLoaded = store.load(dshRecord.id)
+check(dshLoaded == dshRecord, "a route dsh record with all queue fields round-trips equal")
+check(dshLoaded?.route == .dsh && dshLoaded?.dshAccepted == true && dshLoaded?.dshTest == true,
+      "route, dshAccepted and dshTest are stored")
+check(dshLoaded?.nextAttemptAt == t0.addingTimeInterval(60), "nextAttemptAt is stored")
+
+// A record written before Phase 3 (no DSH keys) decodes with the defaults
+let encoder = JSONEncoder()
+encoder.dateEncodingStrategy = .iso8601
+let decoder = JSONDecoder()
+decoder.dateDecodingStrategy = .iso8601
+var legacy = (try? JSONSerialization.jsonObject(with: try! encoder.encode(dshRecord))) as? [String: Any] ?? [:]
+for key in ["route", "dshAccepted", "dshTest", "nextAttemptAt", "duplicateOf", "cockpitStep"] {
+    legacy.removeValue(forKey: key)
+}
+let legacyRecord = try? decoder.decode(SessionRecord.self, from: try! JSONSerialization.data(withJSONObject: legacy))
+check(legacyRecord != nil, "a record without the DSH keys still decodes")
+check(legacyRecord?.route == .local, "a record without route decodes as route local")
+check(legacyRecord?.dshAccepted == false && legacyRecord?.dshTest == false,
+      "a record without dshAccepted/dshTest decodes with both false")
+check(legacyRecord?.nextAttemptAt == nil && legacyRecord?.duplicateOf == nil && legacyRecord?.cockpitStep == nil,
+      "a record without the optional DSH keys decodes them as nil")
+store.delete(dshRecord.id)
+
 try? fm.removeItem(at: dir)
 
 print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")

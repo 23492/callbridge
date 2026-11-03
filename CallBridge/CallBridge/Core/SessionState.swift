@@ -10,6 +10,9 @@ enum SessionStage: String, Codable, CaseIterable {
     case uploading
     case transcribing
     case logging
+    /// D-20: the cockpit finished the transcript but has no account to log it on yet.
+    /// Non-terminal: it waits until Kiran links the account in Transcriberen.
+    case awaitingAccount
     case loggingNNO
     case done
     case failed
@@ -27,6 +30,13 @@ enum SessionStage: String, Codable, CaseIterable {
 enum SessionSource: String, Codable {
     case call
     case manual
+}
+
+/// Which pipeline handles a session. D-09: chosen once when the session leaves
+/// awaitingDecision and persisted, so resume and retry never switch pipelines.
+enum SessionRoute: String, Codable {
+    case dsh
+    case local
 }
 
 /// One recording session as stored in sessions/<id>.json. Local-only file, so the
@@ -52,6 +62,20 @@ struct SessionRecord: Codable, Equatable {
     /// Set by the caller when the session enters loggingNNO, so a retry of a failed
     /// session goes back to the NNO path instead of a full upload.
     var wasNNO: Bool
+    /// D-09: the pipeline this session uses; local for records written before Phase 3.
+    var route: SessionRoute
+    /// D-12: true once the cockpit answered 202 or 200 for this client_ref. An accepted
+    /// session never leaves the DSH route.
+    var dshAccepted: Bool
+    /// D-26: true when the session was sent to the cockpit test routes, so a test session
+    /// never reaches the real routes later.
+    var dshTest: Bool
+    /// D-13: earliest moment the DSH queue may try this session again (backoff).
+    var nextAttemptAt: Date?
+    /// D-16b: the client_ref the cockpit reported this session duplicates.
+    var duplicateOf: String?
+    /// Last cockpit step, used for the menu label.
+    var cockpitStep: String?
 
     init(id: UUID = UUID(), source: SessionSource, phoneNumber: String, now: Date) {
         self.id = id
@@ -62,15 +86,21 @@ struct SessionRecord: Codable, Equatable {
         self.createdAt = now
         self.updatedAt = now
         self.wasNNO = false
+        self.route = .local
+        self.dshAccepted = false
+        self.dshTest = false
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, stage, source, phoneNumber, recorderKind, resumeInfo, audioPath
         case contactID, contactType, contactName, direction, taskID, error
         case attempts, createdAt, updatedAt, wasNNO
+        case route, dshAccepted, dshTest, nextAttemptAt, duplicateOf, cockpitStep
     }
 
-    /// Hand-written only so records saved before wasNNO existed still decode (as false).
+    /// Hand-written only so older records still decode: without wasNNO (as false), and
+    /// without the Phase 3 fields route, dshAccepted, dshTest, nextAttemptAt, duplicateOf and
+    /// cockpitStep (as route local, not accepted, not a test, and nil).
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -90,6 +120,12 @@ struct SessionRecord: Codable, Equatable {
         createdAt = try c.decode(Date.self, forKey: .createdAt)
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         wasNNO = try c.decodeIfPresent(Bool.self, forKey: .wasNNO) ?? false
+        route = try c.decodeIfPresent(SessionRoute.self, forKey: .route) ?? .local
+        dshAccepted = try c.decodeIfPresent(Bool.self, forKey: .dshAccepted) ?? false
+        dshTest = try c.decodeIfPresent(Bool.self, forKey: .dshTest) ?? false
+        nextAttemptAt = try c.decodeIfPresent(Date.self, forKey: .nextAttemptAt)
+        duplicateOf = try c.decodeIfPresent(String.self, forKey: .duplicateOf)
+        cockpitStep = try c.decodeIfPresent(String.self, forKey: .cockpitStep)
     }
 }
 
@@ -146,7 +182,7 @@ func resumeAction(for record: SessionRecord, now: Date) -> ResumeAction {
     case .awaitingDecision: return .showSaveDialog
     case .uploading, .transcribing, .logging: return .resendProcess
     case .loggingNNO: return .resendNNO
-    case .done, .failed, .discarded: return .none
+    case .done, .failed, .discarded, .awaitingAccount: return .none
     }
 }
 
