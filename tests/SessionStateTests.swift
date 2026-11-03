@@ -153,5 +153,50 @@ nnoResume.wasNNO = true
 nnoResume.contactName = "Jan Jansen"
 check(resumeNotificationText(for: nnoResume) == "NNO voor Jan Jansen wordt alsnog gelogd", "resumeNotificationText for an NNO session")
 
+// DSH route transitions (D-15, D-16, D-17, D-20)
+check(canTransition(from: .awaitingDecision, to: .failed), "awaitingDecision -> failed (DSH preflight)")
+check(canTransition(from: .uploading, to: .awaitingAccount), "uploading -> awaitingAccount")
+check(canTransition(from: .transcribing, to: .awaitingAccount), "transcribing -> awaitingAccount")
+check(canTransition(from: .logging, to: .awaitingAccount), "logging -> awaitingAccount")
+check(canTransition(from: .awaitingAccount, to: .done), "awaitingAccount -> done")
+check(canTransition(from: .awaitingAccount, to: .failed), "awaitingAccount -> failed")
+check(canTransition(from: .uploading, to: .logging), "uploading -> logging")
+check(canTransition(from: .transcribing, to: .uploading), "transcribing -> uploading (re-upload after 404)")
+check(canTransition(from: .logging, to: .uploading), "logging -> uploading (re-upload after 404)")
+check(canTransition(from: .failed, to: .transcribing), "failed -> transcribing (cockpit POST retry)")
+check(canTransition(from: .awaitingAccount, to: .transcribing), "awaitingAccount -> transcribing")
+check(canTransition(from: .awaitingAccount, to: .logging), "awaitingAccount -> logging")
+check(canTransition(from: .failed, to: .logging), "failed -> logging")
+check(canTransition(from: .failed, to: .awaitingAccount), "failed -> awaitingAccount")
+check(canTransition(from: .awaitingAccount, to: .awaitingAccount), "awaitingAccount -> awaitingAccount")
+
+// Resume per route (D-09)
+func dshRec(_ stage: SessionStage, accepted: Bool = true, updated: TimeInterval = 0) -> SessionRecord {
+    var r = rec(stage, updated: updated)
+    r.route = .dsh
+    r.dshAccepted = accepted
+    return r
+}
+check(resumeAction(for: dshRec(.uploading), now: now) == .resumeDSH, "resume dsh uploading -> resumeDSH")
+check(resumeAction(for: dshRec(.transcribing), now: now) == .resumeDSH, "resume dsh transcribing -> resumeDSH")
+check(resumeAction(for: dshRec(.logging), now: now) == .resumeDSH, "resume dsh logging -> resumeDSH")
+check(resumeAction(for: dshRec(.awaitingAccount), now: now) == .resumeDSH, "resume dsh awaitingAccount -> resumeDSH")
+check(resumeAction(for: dshRec(.uploading, accepted: false), now: now) == .resumeDSH, "resume dsh uploading not accepted -> resumeDSH")
+check(resumeAction(for: rec(.uploading), now: now) == .resendProcess, "resume local uploading -> resendProcess")
+var localNNO = rec(.loggingNNO)
+localNNO.route = .local
+check(resumeAction(for: localNNO, now: now) == .resendNNO, "resume local loggingNNO -> resendNNO")
+check(resumeAction(for: rec(.awaitingAccount), now: now) == ResumeAction.none, "resume local awaitingAccount -> none")
+
+// Stale rule with DSH sessions (D-20)
+check(staleNonTerminal([dshRec(.awaitingAccount, updated: -month)], now: now).isEmpty, "awaitingAccount 30 days old is never stale")
+check(staleNonTerminal([dshRec(.uploading, accepted: false, updated: -month)], now: now).isEmpty, "queued unaccepted dsh upload 30 days old is not stale")
+let localStale = rec(.transcribing, updated: -(8 * 24 * 3600))
+check(staleNonTerminal([localStale], now: now).map { $0.id } == [localStale.id], "local transcribing 8 days old is stale")
+let dshStale = dshRec(.transcribing, updated: -(8 * 24 * 3600))
+check(staleNonTerminal([dshStale], now: now).map { $0.id } == [dshStale.id], "accepted dsh transcribing 8 days old is stale")
+check(!SessionStage.awaitingAccount.isTerminal, "awaitingAccount is not terminal")
+check(sessionsToPrune([dshRec(.awaitingAccount, updated: -month)], now: now).isEmpty, "awaitingAccount is never pruned")
+
 print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)

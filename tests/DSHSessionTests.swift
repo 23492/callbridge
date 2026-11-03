@@ -44,5 +44,43 @@ check(!shouldTrashRecording(status: "done", taskId: ""), "no trash done + empty 
 check(!shouldTrashRecording(status: "failed", taskId: "00T000000000001"), "no trash failed + taskId")
 check(!shouldTrashRecording(status: "transcribing", taskId: "00T000000000001"), "no trash transcribing + taskId")
 
+// Dutch step labels (D-16)
+check(cockpitStepLabel(status: "uploading", step: nil) == "Uploaden", "label uploading -> Uploaden")
+check(cockpitStepLabel(status: "transcribing", step: nil) == "Transcriberen", "label transcribing -> Transcriberen")
+check(cockpitStepLabel(status: "summarizing", step: nil) == "Samenvatten", "label summarizing -> Samenvatten")
+check(cockpitStepLabel(status: "writing", step: nil) == "Salesforce bijwerken", "label writing -> Salesforce bijwerken")
+check(cockpitStepLabel(status: "done", step: "waiting_for_account") == "Wacht op account", "label done/waiting_for_account -> Wacht op account")
+check(cockpitStepLabel(status: "bogus", step: nil) == "Bezig", "label unknown -> Bezig")
+
+// Poll interval (D-18)
+check(dshFastPollInterval == 15 && dshSlowPollInterval == 300, "poll intervals are 15 s and 300 s")
+check(dshPollInterval([rec(.transcribing, route: .dsh, accepted: true), rec(.awaitingAccount, route: .dsh, accepted: true)]) == 15, "poll 15 s with an active accepted dsh session")
+check(dshPollInterval([rec(.uploading, route: .dsh, accepted: true)]) == 15, "poll 15 s for an accepted dsh upload")
+check(dshPollInterval([rec(.logging, route: .dsh, accepted: true)]) == 15, "poll 15 s for an accepted dsh logging session")
+check(dshPollInterval([rec(.awaitingAccount, route: .dsh, accepted: true)]) == 300, "poll 300 s when only awaitingAccount remains")
+check(dshPollInterval([]) == nil, "no poll without records")
+check(dshPollInterval([rec(.transcribing, route: .local)]) == nil, "no poll for local sessions")
+check(dshPollInterval([rec(.uploading, route: .dsh, accepted: false)]) == nil, "no poll for an unaccepted dsh upload")
+check(dshPollInterval([rec(.done, route: .dsh, accepted: true)]) == nil, "no poll for a done dsh session")
+
+// Credential keys (D-08)
+check(requiredCredentialKeys(dshEnabled: true) == ["SF_USERNAME", "SF_PASSWORD", "SF_SECURITY_TOKEN", "SF_DOMAIN"], "DSH on needs only the four SF keys")
+check(requiredCredentialKeys(dshEnabled: false) == ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY", "SF_USERNAME", "SF_PASSWORD", "SF_SECURITY_TOKEN", "SF_DOMAIN"], "DSH off needs all six keys in the current order")
+
+// Settings keys and the DSH toggle (D-06, D-26)
+check(dshEnabledDefaultsKey == "dshEnabled", "dshEnabled defaults key")
+check(dshUseTestRoutesDefaultsKey == "dshUseTestRoutes", "dshUseTestRoutes defaults key")
+check(dshTestScenarioDefaultsKey == "dshTestScenario", "dshTestScenario defaults key")
+let suiteName = "callbridge-tests-\(UUID().uuidString)"
+if let suite = UserDefaults(suiteName: suiteName) {
+    check(readDSHEnabled(suite) == true, "readDSHEnabled on a fresh suite -> true")
+    suite.set(false, forKey: dshEnabledDefaultsKey)
+    check(readDSHEnabled(suite) == false, "readDSHEnabled after setting false -> false")
+    suite.removePersistentDomain(forName: suiteName)
+} else {
+    check(false, "UserDefaults(suiteName:) returned nil")
+}
+check(dshCockpitURL == "https://dsh2.knoppsmart.com/cockpit/", "cockpit URL")
+
 print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)
