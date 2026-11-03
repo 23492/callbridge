@@ -46,7 +46,8 @@ let names = ["client_ref", "phone_number", "direction", "started_at", "salesforc
 let positions = names.map { ranges(of: "name=\"\($0)\"", in: body).first ?? -1 }
 check(!positions.contains(-1), "every field name occurs in the body")
 check(positions == positions.sorted(), "field order is client_ref .. scenario, then audio")
-check(ranges(of: "name=\"", in: body).count == names.count, "exactly one part per field")
+// Count Content-Disposition headers, not `name="`: that substring also ends `filename="`.
+check(ranges(of: "Content-Disposition: form-data; name=\"", in: body).count == names.count, "exactly one part per field")
 
 // File bytes, size, permissions
 let header = multipartFileHeader(name: "audio", filename: audio.lastPathComponent, mime: "audio/mpeg", boundary: boundary)
