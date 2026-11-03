@@ -58,7 +58,7 @@ func makeFixture() -> String {
     for i in 0..<bytes.count { bytes[i] = UInt8(i % 251) }
     for _ in 0..<32 { bytes.append(UInt8.random(in: 0...255)) }
     let path = NSTemporaryDirectory() + "callbridge-live-\(UUID().uuidString).m4a"
-    FileManager.default.createFile(atPath: path, contents: Data(bytes))
+    _ = FileManager.default.createFile(atPath: path, contents: Data(bytes))
     return path
 }
 

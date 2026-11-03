@@ -128,16 +128,16 @@ final class Cloudflared {
 
         // Drain both pipes while the process runs, so a full pipe can never block it.
         let readers = DispatchGroup()
-        var outData = Data()
-        var errData = Data()
+        let outBox = PipeBox()
+        let errBox = PipeBox()
         readers.enter()
         DispatchQueue.global(qos: .utility).async {
-            outData = out.fileHandleForReading.readDataToEndOfFile()
+            outBox.set(out.fileHandleForReading.readDataToEndOfFile())
             readers.leave()
         }
         readers.enter()
         DispatchQueue.global(qos: .utility).async {
-            errData = err.fileHandleForReading.readDataToEndOfFile()
+            errBox.set(err.fileHandleForReading.readDataToEndOfFile())
             readers.leave()
         }
 
@@ -157,8 +157,8 @@ final class Cloudflared {
         return classifyCloudflaredToken(
             launched: true,
             exit: exitCode,
-            stdout: String(data: outData, encoding: .utf8) ?? "",
-            stderr: String(data: errData, encoding: .utf8) ?? "",
+            stdout: String(data: outBox.get(), encoding: .utf8) ?? "",
+            stderr: String(data: errBox.get(), encoding: .utf8) ?? "",
             timedOut: timedOut)
     }
 
@@ -171,4 +171,12 @@ final class Cloudflared {
         case .missing: return "missing"
         }
     }
+}
+
+/// Bytes read from one pipe on a reader thread, handed over under a lock.
+private final class PipeBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+    func set(_ d: Data) { lock.lock(); data = d; lock.unlock() }
+    func get() -> Data { lock.lock(); defer { lock.unlock() }; return data }
 }

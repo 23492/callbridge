@@ -1,4 +1,8 @@
 import Foundation
+#if canImport(FoundationNetworking)
+// Linux keeps URLSession in FoundationNetworking; macOS has it in Foundation.
+import FoundationNetworking
+#endif
 
 // MARK: - DSH Client
 
