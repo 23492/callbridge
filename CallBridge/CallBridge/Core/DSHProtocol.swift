@@ -85,17 +85,97 @@ enum DSHOutcome: Equatable {
     case cloudflaredMissing
 }
 
+/// Shown for a Cloudflare HTML 413: the edge refused the body before the cockpit saw it.
+let dshTooLargeMessage = "Opname is te groot voor DSH (max 95 MB). Zet 'Transcriberen via DSH' uit en probeer opnieuw."
+
 /// Maps one HTTP answer (or a transport error, status nil) to an outcome. Inputs are
-/// plain values so the rules run without URLSession.
+/// plain values so the rules run without URLSession. The order matters: 413 and 5xx
+/// come before the HTML rule, so a Cloudflare error page never reads as a missing
+/// sign-in and a recording is never parked behind a useless "Log in bij DSH".
 func classifyDSHResponse(status: Int?, contentType: String?, location: String?, wwwAuthenticate: String?, body: Data?) -> DSHOutcome {
-    guard let status = status else { return .retryable("onbekend antwoord") }
+    guard let status = status else { return .retryable("DSH niet bereikbaar") }
     let isJSON = (contentType ?? "").lowercased().split(separator: ";").first?
         .trimmingCharacters(in: .whitespaces) == "application/json"
-    if (200...299).contains(status), isJSON, let body = body,
-       let head = try? JSONDecoder().decode(EnvelopeHead.self, from: body), head.ok {
+    let head = body.flatMap { try? JSONDecoder().decode(EnvelopeHead.self, from: $0) }
+
+    // 1. Too large: the cockpit's own message when it answered, else the edge page.
+    if status == 413 {
+        if isJSON, let error = head?.error {
+            return .rejected(code: error.code, message: error.message ?? "Fout van DSH (\(error.code))")
+        }
+        return .rejected(code: "too_large", message: dshTooLargeMessage)
+    }
+    // 2. Redirects are refused by the client (D-03). Access sends a 302 to
+    //    https://<team>.cloudflareaccess.com/cdn-cgi/access/login/...; this host sends
+    //    no other redirect, so every 3xx means Access missing whatever `location` says.
+    if (300...399).contains(status) {
+        return .accessMissing
+    }
+    // 3. Access challenge, whatever the status.
+    if let auth = wwwAuthenticate, auth.hasPrefix("Cloudflare-Access") {
+        return .accessMissing
+    }
+    // 4. Server trouble without a cockpit answer (Cloudflare 502, 520-524 pages).
+    if (500...599).contains(status), !isJSON {
+        return .retryable("DSH antwoordt met \(status)")
+    }
+    // 5. Any other non-JSON answer is the Access login page or similar (D-03).
+    if !isJSON {
+        return .accessMissing
+    }
+    // 6. The cockpit envelope.
+    guard let envelope = head else { return dshBadResponse }
+    if (200...299).contains(status) {
+        guard envelope.ok, let body = body else { return dshBadResponse }
         return .success(body)
     }
-    return .retryable("onbekend antwoord")
+    guard let error = envelope.error else {
+        return (500...599).contains(status) ? .retryable("DSH antwoordt met \(status)") : dshBadResponse
+    }
+    let message = error.message ?? "Fout van DSH (\(error.code))"
+    switch status {
+    case 503 where error.code == "switch_off":
+        return .switchOff
+    case 500...599:
+        return .retryable(message)
+    case 401 where error.code == "unauthorized":
+        return .unauthorized
+    case 404:
+        return .notFound
+    case 409:
+        return .conflict
+    case 400...499:
+        return .rejected(code: error.code, message: message)
+    default:
+        return dshBadResponse
+    }
+}
+
+/// A JSON answer that does not fit the envelope; the recording stays.
+private let dshBadResponse = DSHOutcome.rejected(code: "bad_response", message: "Onverwacht antwoord van DSH")
+
+// MARK: - Routes
+
+/// The Cloudflare Access application; `cloudflared access token -app=` takes this URL.
+let dshAccessApp = "https://dsh2.knoppsmart.com"
+/// Base of every CallBridge route; paths from dshRoutePath are relative to it.
+let dshAPIBase = "https://dsh2.knoppsmart.com/cockpit/api/callbridge/v1/"
+
+enum DSHRoute: Equatable {
+    case pair, health, echo, upload, call(String), retry(String)
+}
+
+/// Path below dshAPIBase. Pair has no test route; echo exists only under test/ (D-26).
+func dshRoutePath(_ route: DSHRoute, test: Bool) -> String {
+    let prefix = test ? "test/" : ""
+    switch route {
+    case .pair: return "pair"
+    case .echo: return "test/echo"
+    case .health: return prefix + "health"
+    case .upload: return prefix + "calls"
+    case .call(let ref): return prefix + "calls/\(ref)"
+    case .retry(let ref): return prefix + "calls/\(ref)/retry"
+    }
 }
 
 /// Only `ok` and `error` of an envelope, so the head can be read whatever `data` holds.
