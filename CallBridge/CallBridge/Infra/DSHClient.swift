@@ -46,6 +46,99 @@ final class DSHClient {
                 completion: completion)
     }
 
+    /// POST pair with the one-time code from the cockpit. The only route without the
+    /// client token (D-06). Neither the code nor the answer body is ever logged; a
+    /// `.success` body holds the client token for the Keychain.
+    func pair(code: String, completion: @escaping (DSHOutcome) -> Void) {
+        guard let body = try? JSONSerialization.data(withJSONObject: ["code": code]) else {
+            completion(.rejected(code: "bad_request", message: "Ongeldige koppelcode"))
+            return
+        }
+        perform(.pair, test: false, method: "POST", clientToken: nil,
+                configure: { request in
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                },
+                send: { request, handler in self.session.uploadTask(with: request, from: body, completionHandler: handler) },
+                completion: completion)
+    }
+
+    /// GET health or test/health.
+    func health(clientToken: String, test: Bool, completion: @escaping (DSHOutcome) -> Void) {
+        perform(.health, test: test, method: "GET", clientToken: clientToken,
+                configure: { _ in },
+                send: { request, handler in self.session.dataTask(with: request, completionHandler: handler) },
+                completion: completion)
+    }
+
+    /// POST calls or test/calls. The body is written to a 0600 temp file and sent with
+    /// uploadTask(fromFile:), so the recording is never held in memory (D-02). The temp
+    /// file is removed when the answer arrives and on a writer error.
+    func upload(clientToken: String, test: Bool, fields: [(String, String)], audioPath: String, mime: String,
+                completion: @escaping (DSHOutcome) -> Void) {
+        DispatchQueue.global(qos: .utility).async {
+            let boundary = "CallBridge-" + UUID().uuidString
+            let bodyURL = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("callbridge-dsh-\(UUID().uuidString).multipart")
+            do {
+                _ = try writeMultipartBody(fields: fields, audioPath: audioPath, mime: mime,
+                                           boundary: boundary, to: bodyURL)
+            } catch {
+                try? FileManager.default.removeItem(at: bodyURL)
+                debugLog("DSHClient: upload -> body not written, rejected(unreadable)")
+                completion(.rejected(code: "unreadable", message: "Opname is leeg of niet leesbaar"))
+                return
+            }
+            self.perform(.upload, test: test, method: "POST", clientToken: clientToken,
+                         configure: { request in
+                             request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+                         },
+                         send: { request, handler in
+                             self.session.uploadTask(with: request, fromFile: bodyURL) { data, response, error in
+                                 try? FileManager.default.removeItem(at: bodyURL)
+                                 handler(data, response, error)
+                             }
+                         },
+                         completion: { outcome in
+                             // Also covers the paths where no request was sent (no token, login needed).
+                             try? FileManager.default.removeItem(at: bodyURL)
+                             completion(outcome)
+                         })
+        }
+    }
+
+    /// GET calls/<client_ref> or its test twin.
+    func call(clientRef: String, clientToken: String, test: Bool, completion: @escaping (DSHOutcome) -> Void) {
+        perform(.call(clientRef), test: test, method: "GET", clientToken: clientToken,
+                configure: { _ in },
+                send: { request, handler in self.session.dataTask(with: request, completionHandler: handler) },
+                completion: completion)
+    }
+
+    /// POST calls/<client_ref>/retry with an empty body; only a failed record accepts it.
+    func retry(clientRef: String, clientToken: String, test: Bool, completion: @escaping (DSHOutcome) -> Void) {
+        perform(.retry(clientRef), test: test, method: "POST", clientToken: clientToken,
+                configure: { _ in },
+                send: { request, handler in self.session.uploadTask(with: request, from: Data(), completionHandler: handler) },
+                completion: completion)
+    }
+
+    /// Deletes body files left by a crash or a kill mid-upload: callbridge-dsh-*.multipart
+    /// in NSTemporaryDirectory() older than one hour (T-03-11). Called on launch.
+    static func sweepStaleBodies() {
+        let fm = FileManager.default
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+        guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return }
+        let cutoff = Date().addingTimeInterval(-3600)
+        var removed = 0
+        for name in names where name.hasPrefix("callbridge-dsh-") && name.hasSuffix(".multipart") {
+            let url = dir.appendingPathComponent(name)
+            guard let modified = (try? fm.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
+                  modified < cutoff else { continue }
+            if (try? fm.removeItem(at: url)) != nil { removed += 1 }
+        }
+        if removed > 0 { debugLog("DSHClient: swept \(removed) stale upload bodies") }
+    }
+
     // MARK: - Request Path
 
     /// The one request path: Access token, headers, send, classify. The URL is
