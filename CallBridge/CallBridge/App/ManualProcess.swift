@@ -131,7 +131,9 @@ class ManualProcessViewModel: NSObject, ObservableObject, AVAudioPlayerDelegate 
         guard !isSending, selectedContact?.id != nil else { return }
         isSending = true
         stopPlayback()
-        appDelegate?.sendToBackend(
+        // D-25: only with a picked Salesforce record (guard above, button disabled without
+        // one), since the cockpit accepts an empty phone_number only with salesforce_id.
+        appDelegate?.submitSession(
             sessionID: sessionID,
             audioPath: audioPath,
             phoneNumber: selectedContact?.phone ?? "",

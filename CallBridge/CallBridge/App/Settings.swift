@@ -171,8 +171,9 @@ class SettingsViewModel: ObservableObject {
 
     func save() {
         isSaving = true
-        KeychainHelper.save(key: "ASSEMBLYAI_API_KEY", value: assemblyAIKey)
-        KeychainHelper.save(key: "GEMINI_API_KEY",     value: geminiKey)
+        // D-08: with DSH on the AI fields may be empty; never overwrite stored keys with "".
+        if !assemblyAIKey.isEmpty { KeychainHelper.save(key: "ASSEMBLYAI_API_KEY", value: assemblyAIKey) }
+        if !geminiKey.isEmpty     { KeychainHelper.save(key: "GEMINI_API_KEY",     value: geminiKey) }
         KeychainHelper.save(key: "SF_USERNAME",        value: sfUsername)
         KeychainHelper.save(key: "SF_PASSWORD",        value: sfPassword)
         KeychainHelper.save(key: "SF_SECURITY_TOKEN",  value: sfSecurityToken)
@@ -191,7 +192,7 @@ struct SettingsView: View {
                 Section("DSH") {
                     Toggle("Transcriberen via DSH", isOn: $viewModel.dshEnabled)
                     Text(viewModel.isPaired ? "Gekoppeld" : "Niet gekoppeld")
-                        .foregroundColor(viewModel.isPaired ? .green : .secondary)
+                        .foregroundColor(viewModel.isPaired ? Color.green : Color.secondary)
                     TextField("Koppelcode", text: $viewModel.pairingCode)
                     HStack {
                         Button("Koppelen") { viewModel.pair() }
@@ -212,6 +213,9 @@ struct SettingsView: View {
                 Section("API Keys") {
                     SecureField("AssemblyAI API key", text: $viewModel.assemblyAIKey)
                     SecureField("Gemini API key",     text: $viewModel.geminiKey)
+                    Text("Alleen nodig als 'Transcriberen via DSH' uit staat.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
                 Section("Salesforce") {
                     SecureField("Gebruikersnaam",  text: $viewModel.sfUsername)
@@ -251,8 +255,8 @@ struct SettingsView: View {
                 Spacer()
                 Button("Opslaan") { viewModel.save() }
                     .disabled(
-                        viewModel.assemblyAIKey.isEmpty ||
-                        viewModel.geminiKey.isEmpty ||
+                        (!viewModel.dshEnabled && viewModel.assemblyAIKey.isEmpty) ||
+                        (!viewModel.dshEnabled && viewModel.geminiKey.isEmpty) ||
                         viewModel.sfUsername.isEmpty ||
                         viewModel.sfPassword.isEmpty ||
                         viewModel.sfSecurityToken.isEmpty ||

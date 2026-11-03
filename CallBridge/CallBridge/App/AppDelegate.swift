@@ -193,8 +193,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     }
 
     private func runCredentialCheck(completion: @escaping (Bool) -> Void) {
-        let keys = ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY",
-                    "SF_USERNAME", "SF_PASSWORD", "SF_SECURITY_TOKEN", "SF_DOMAIN"]
+        // D-08: the AI keys are only required while "Transcriberen via DSH" is off.
+        let keys = requiredCredentialKeys(dshEnabled: readDSHEnabled(.standard))
         guard KeychainHelper.allPresent(keys: keys) else {
             debugLog("credentialCheckPassed: missing Keychain items — showing Settings")
             completion(false)
@@ -459,9 +459,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             guard let self = self else { return }
             self.settingsWindow?.close()
             self.settingsWindow = nil
-            if KeychainHelper.allPresent(keys: ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY",
-                                                 "SF_USERNAME", "SF_PASSWORD",
-                                                 "SF_SECURITY_TOKEN", "SF_DOMAIN"]) {
+            // Same rule as runCredentialCheck, so the two sites cannot drift (D-08).
+            if KeychainHelper.allPresent(keys: requiredCredentialKeys(dshEnabled: readDSHEnabled(.standard))) {
                 self.pendingBackendStart = false
                 self.backendSupervisor.reloadCredentials()
             }
@@ -957,6 +956,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     /// The route is chosen here once and stored on the session (D-09): local goes to the
     /// existing POST /process path unchanged (D-10, TRX-07), dsh goes to the DSH queue,
     /// which never calls POST /process or /log-nno for that session (TRX-04).
+    ///
+    /// Hidden test setting (D-26), no UI:
+    ///   defaults write com.welisa.callbridge dshUseTestRoutes -bool YES
+    ///   defaults write com.welisa.callbridge dshTestScenario ok
+    /// point new DSH sessions at the cockpit test routes (record.dshTest) with that
+    /// scenario. A session keeps the target it was created with; flipping the setting
+    /// later never moves an existing session between test and real routes.
     func submitSession(sessionID: UUID, audioPath: String, phoneNumber: String, contact: ContactInfo?, direction: String = "Outbound") {
         guard let record = sessionStore.load(sessionID) else {
             debugLog("submitSession: no record for \(sessionID)")
