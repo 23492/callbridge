@@ -277,6 +277,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     func menuNeedsUpdate(_ menu: NSMenu) {
         rebuildMenu()
         refreshStatus()
+        // D-18: one DSH poll per menu open; it never blocks the menu.
+        dshQueue.pollNow()
     }
 
     private var statusRefreshInFlight = false
