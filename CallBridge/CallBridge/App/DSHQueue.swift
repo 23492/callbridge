@@ -19,14 +19,33 @@ final class DSHQueue {
     let cloudflared = Cloudflared()
     lazy var client = DSHClient(cloudflared: cloudflared)
 
-    /// Why the queue waits, or nil. Every recording is kept while paused; 03-05 renders it.
+    /// Why the queue waits, or nil. Every recording is kept while paused; the menu shows
+    /// pauseReason.menuTitle as one clickable line (D-21). Clearing it resets
+    /// notifiedPause, so the next pause notifies once again (D-23).
     private(set) var pauseReason: DSHPauseReason? {
         didSet {
             guard pauseReason != oldValue else { return }
             debugLog("DSHQueue: pause \(pauseReason?.rawValue ?? "cleared")")
+            if let reason = pauseReason {
+                notifyPauseOnce(reason)
+            } else {
+                notifiedPause = nil
+                unauthorizedToken = nil
+            }
             onPauseChange?(pauseReason)
         }
     }
+    /// The pause reason already announced by a notification (D-23: one per pause, not one per call).
+    private var notifiedPause: DSHPauseReason?
+    /// The token the cockpit answered unauthorized for, kept in memory only and never
+    /// logged. needsPairing clears once the Keychain holds a different token, so a revoked
+    /// token does not resend on every menu open.
+    private var unauthorizedToken: String?
+    /// When kick() last asked cloudflared whether a needsLogin pause is still real.
+    private var lastLoginCheck: Date?
+    private var loginCheckInFlight = false
+    /// True while "Log in bij DSH" runs cloudflared access login; a second click adds nothing.
+    private var loginRunning = false
     /// Called on the main queue whenever pauseReason changes.
     var onPauseChange: ((DSHPauseReason?) -> Void)?
 
@@ -59,9 +78,79 @@ final class DSHQueue {
                 guard let self = self else { return }
                 self.clientToken = token
                 self.tokenLoaded = true
-                if token != nil, self.pauseReason == .needsPairing { self.pauseReason = nil }
+                if token != nil, token != self.unauthorizedToken, self.pauseReason == .needsPairing { self.pauseReason = nil }
                 debugLog("DSHQueue: client token \(token == nil ? "absent" : "present")")
                 then?()
+            }
+        }
+    }
+
+    // MARK: - Pause
+
+    /// D-23: exactly one notification when the queue pauses for sign-in or pairing, not one
+    /// per call. The other pauses only show in the menu.
+    private func notifyPauseOnce(_ reason: DSHPauseReason) {
+        guard reason != notifiedPause else { return }
+        let message: String
+        switch reason {
+        case .needsLogin: message = "DSH: log in om de wachtrij te versturen"
+        case .needsPairing: message = "DSH: koppel CallBridge opnieuw in Instellingen"
+        case .cloudflaredMissing, .unreachable, .switchOff: return
+        }
+        notifiedPause = reason
+        app?.showNotification(title: "CallBridge", message: message)
+    }
+
+    /// Sets the pause an outcome causes. An unauthorized answer remembers the refused token
+    /// so needsPairing only clears once a new token is stored (D-07).
+    private func setPause(for outcome: DSHOutcome, token: String?) {
+        guard let reason = queuePauseReason(for: outcome) else { return }
+        if reason == .needsPairing { unauthorizedToken = token }
+        pauseReason = reason
+    }
+
+    /// While paused for needsLogin: asks cloudflared once (after invalidate) at most every
+    /// 60 s whether a token is available again; a token clears the pause and resumes, so a
+    /// login done in Terminal also restarts the queue.
+    private func recheckLogin() {
+        guard !loginCheckInFlight, !loginRunning else { return }
+        let now = Date()
+        if let last = lastLoginCheck, now.timeIntervalSince(last) < dshAccessTokenCacheLifetime { return }
+        lastLoginCheck = now
+        loginCheckInFlight = true
+        cloudflared.invalidate()
+        cloudflared.accessToken { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.loginCheckInFlight = false
+                guard case .token = result, self.pauseReason == .needsLogin else { return }
+                debugLog("DSHQueue: Access token available again, resuming")
+                self.pauseReason = nil
+                self.kick()
+                self.pollNow()
+            }
+        }
+    }
+
+    /// "Log in bij DSH": runs `cloudflared access login` once (cloudflared opens the
+    /// browser). On success the pause clears and the queue resumes by itself (D-05); a
+    /// second click while a login runs does nothing extra.
+    func login() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !loginRunning else { return }
+        loginRunning = true
+        debugLog("DSHQueue: login started")
+        cloudflared.login { [weak self] ok in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.loginRunning = false
+                debugLog("DSHQueue: login \(ok ? "succeeded" : "failed")")
+                guard ok else { return }
+                self.cloudflared.invalidate()
+                if self.pauseReason == .needsLogin { self.pauseReason = nil }
+                self.lastLoginCheck = nil
+                self.kick()
+                self.pollNow()
             }
         }
     }
@@ -70,11 +159,45 @@ final class DSHQueue {
 
     /// Uploads every route dsh session the cockpit has not accepted yet and whose backoff
     /// has passed; schedules a one-shot timer for the earliest one still waiting.
+    /// Every local pause reason is re-checked first, so fixing its cause resumes the queue
+    /// without a relaunch (D-07, D-13). Runs at launch, on pairing changes, on every menu
+    /// open and after the "cloudflared ontbreekt" item; it only reads cached state and
+    /// starts work async, so the menu never blocks.
     func kick() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let app = app else { return }
+        // 0. No DSH work waiting (toggle off, or only local and finished sessions): no pause
+        //    state and no notification, whatever pairing or cloudflared look like (D-10, D-21, D-23).
+        guard hasPendingDSHWork(app.sessionStore.list()) else {
+            if pauseReason != nil { pauseReason = nil }
+            notifiedPause = nil
+            return
+        }
+        // 1. Launch race: a slow Keychain read must never show "Koppel opnieuw".
         guard tokenLoaded else {
             reloadToken { [weak self] in self?.kick() }
+            return
+        }
+        // 2. Pairing (D-07): no token pauses; a token other than the refused one clears it.
+        guard let token = clientToken else {
+            pauseReason = .needsPairing
+            return
+        }
+        if pauseReason == .needsPairing {
+            guard token != unauthorizedToken else { return }
+            pauseReason = nil
+        }
+        // 3. cloudflared (D-04): installing it clears the pause at the next kick.
+        guard Cloudflared.locate() != nil else {
+            pauseReason = .cloudflaredMissing
+            return
+        }
+        if pauseReason == .cloudflaredMissing { pauseReason = nil }
+        // 4. Sign-in (D-05): stays until login() succeeds or cloudflared hands out a token
+        //    again, for example after a login in Terminal. Asked at most every 60 s.
+        if pauseReason == .needsLogin {
+            recheckLogin()
+            // 5. Nothing is sent and no attempt is counted while waiting for Kiran (D-13).
             return
         }
         let now = Date()
@@ -152,11 +275,11 @@ final class DSHQueue {
             scenario: record.dshTest ? UserDefaults.standard.string(forKey: dshTestScenarioDefaultsKey) : nil)
         debugLog("DSHQueue: upload \(id) test=\(record.dshTest) attempt=\(record.attempts)")
         client.upload(clientToken: token, test: record.dshTest, fields: fields, audioPath: path, mime: mime) { [weak self] outcome in
-            DispatchQueue.main.async { self?.handleUpload(outcome, for: id) }
+            DispatchQueue.main.async { self?.handleUpload(outcome, for: id, token: token) }
         }
     }
 
-    private func handleUpload(_ outcome: DSHOutcome, for id: UUID) {
+    private func handleUpload(_ outcome: DSHOutcome, for id: UUID, token: String) {
         inFlight.remove(id)
         guard let app = app, let current = app.sessionStore.load(id),
               current.route == .dsh, !current.stage.isTerminal else { return }
@@ -183,7 +306,8 @@ final class DSHQueue {
             backOff(id)
         case .accessMissing, .unauthorized, .cloudflaredMissing:
             // Waits for Kiran (sign in, pair, install): no attempt is counted (D-13).
-            pauseReason = queuePauseReason(for: outcome)
+            if outcome == .accessMissing { lastLoginCheck = Date() }
+            setPause(for: outcome, token: token)
         }
     }
 
@@ -293,6 +417,9 @@ final class DSHQueue {
             return
         }
         guard let token = clientToken else { return }
+        // While waiting for Kiran (sign in, pair, install) a poll cannot get through;
+        // kick() re-checks those causes instead.
+        if let reason = pauseReason, !reason.countsAttempt { return }
         let now = Date()
         let records = app.sessionStore.list().filter { record in
             guard record.route == .dsh, record.dshAccepted, DSHQueue.polledStages.contains(record.stage) else { return false }
@@ -318,7 +445,7 @@ final class DSHQueue {
             client.call(clientRef: followRef ?? id.uuidString, clientToken: token, test: record.dshTest) { [weak self] outcome in
                 DispatchQueue.main.async {
                     defer { group.leave() }
-                    self?.handlePoll(outcome, for: id, viaDuplicate: followRef != nil)
+                    self?.handlePoll(outcome, for: id, viaDuplicate: followRef != nil, token: token)
                 }
             }
         }
@@ -327,7 +454,7 @@ final class DSHQueue {
         }
     }
 
-    private func handlePoll(_ outcome: DSHOutcome, for id: UUID, viaDuplicate: Bool) {
+    private func handlePoll(_ outcome: DSHOutcome, for id: UUID, viaDuplicate: Bool, token: String) {
         guard let app = app, let current = app.sessionStore.load(id),
               current.route == .dsh, current.dshAccepted, !current.stage.isTerminal else { return }
         switch outcome {
@@ -351,7 +478,8 @@ final class DSHQueue {
             kick()
         case .accessMissing, .unauthorized, .cloudflaredMissing, .switchOff, .retryable:
             debugLog("DSHQueue: poll \(id) -> \(DSHClient.caseName(outcome))")
-            pauseReason = queuePauseReason(for: outcome)
+            if outcome == .accessMissing { lastLoginCheck = Date() }
+            setPause(for: outcome, token: token)
         case .rejected, .conflict:
             debugLog("DSHQueue: poll \(id) -> \(DSHClient.caseName(outcome))")
         }

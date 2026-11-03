@@ -110,6 +110,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         statusItem.menu = statusMenu
         rebuildMenu()
 
+        // D-21: the DSH status line follows the queue's pause state.
+        dshQueue.onPauseChange = { [weak self] _ in
+            self?.rebuildMenu()
+            self?.updateStatusIcon()
+        }
+
         // Gate backend start on credential presence check (D-05, D-06). After the
         // menu-bar icon exists, so slow Keychain prompts don't leave the app invisible.
         credentialCheckPassed { [weak self] passed in
@@ -277,6 +283,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     func menuNeedsUpdate(_ menu: NSMenu) {
         rebuildMenu()
         refreshStatus()
+        // D-07, D-13: re-check every pause cause (pairing, cloudflared, sign-in) so a fix
+        // resumes the queue; kick only reads cached state and starts work async.
+        dshQueue.kick()
         // D-18: one DSH poll per menu open; it never blocks the menu.
         dshQueue.pollNow()
     }
@@ -326,6 +335,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(NSMenuItem.separator())
+
+        // Built from the session store only, before the local backend check, so the DSH
+        // state shows even when the local server is down (D-21, D-22, Pitfall 6).
+        addDSHSections(to: menu)
 
         guard serverReachable else {
             let item = NSMenuItem(title: "Server niet bereikbaar — probeert te herstellen…", action: nil, keyEquivalent: "")
@@ -451,6 +464,52 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         settingsMenuItem.target = self
         menu.addItem(settingsMenuItem)
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    }
+
+    // MARK: - DSH Menu
+
+    /// The DSH part of the menu: one clickable status line while the queue is paused
+    /// (D-21). Reads only in-memory state and the session store, never the network.
+    /// Normal state adds nothing.
+    func addDSHSections(to menu: NSMenu) {
+        if let reason = dshQueue.pauseReason {
+            let action: Selector
+            switch reason {
+            case .needsLogin: action = #selector(dshLogin)
+            case .needsPairing: action = #selector(openDSHSettings)
+            case .cloudflaredMissing: action = #selector(copyCloudflaredInstall)
+            case .unreachable, .switchOff: action = #selector(dshRetryNow)
+            }
+            let item = NSMenuItem(title: reason.menuTitle, action: action, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+            menu.addItem(NSMenuItem.separator())
+        }
+    }
+
+    /// "Log in bij DSH": cloudflared access login, then the queue resumes by itself (D-05).
+    @objc func dshLogin() {
+        dshQueue.login()
+    }
+
+    /// "Koppel opnieuw": pairing lives in Settings (D-07).
+    @objc func openDSHSettings() {
+        showSettings()
+    }
+
+    /// "cloudflared ontbreekt": copies the install command (D-04) and kicks the queue, so
+    /// an install done meanwhile clears the pause.
+    @objc func copyCloudflaredInstall() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(cloudflaredInstallCommand, forType: .string)
+        showNotification(title: "CallBridge", message: "Gekopieerd: \(cloudflaredInstallCommand)")
+        dshQueue.kick()
+    }
+
+    /// "DSH niet bereikbaar" / "DSH staat uit in de cockpit": try now instead of waiting.
+    @objc func dshRetryNow() {
+        dshQueue.kick()
+        dshQueue.pollNow()
     }
 
     @objc func showSettings() {

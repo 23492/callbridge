@@ -69,6 +69,17 @@ func dshPollInterval(_ records: [SessionRecord]) -> TimeInterval? {
     return nil
 }
 
+// MARK: - DSH Pending Work
+
+/// D-10, D-21, D-23: true when at least one route dsh session still waits on the cockpit,
+/// that is stage uploading, transcribing, logging or awaitingAccount, accepted or not.
+/// The DSH pause state (menu status line, pause notification) exists only while this is
+/// true, so an unpaired Mac with the toggle off never shows "Koppel opnieuw".
+func hasPendingDSHWork(_ records: [SessionRecord]) -> Bool {
+    let waiting: Set<SessionStage> = [.uploading, .transcribing, .logging, .awaitingAccount]
+    return records.contains { $0.route == .dsh && waiting.contains($0.stage) }
+}
+
 // MARK: - DSH Settings
 
 /// D-06: UserDefaults key of the "Transcriberen via DSH" toggle (default on).

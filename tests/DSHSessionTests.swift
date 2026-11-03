@@ -63,6 +63,17 @@ check(dshPollInterval([rec(.transcribing, route: .local)]) == nil, "no poll for 
 check(dshPollInterval([rec(.uploading, route: .dsh, accepted: false)]) == nil, "no poll for an unaccepted dsh upload")
 check(dshPollInterval([rec(.done, route: .dsh, accepted: true)]) == nil, "no poll for a done dsh session")
 
+// Pending DSH work gates the pause state (D-10, D-21, D-23)
+check(hasPendingDSHWork([]) == false, "no pending dsh work in an empty store")
+check(hasPendingDSHWork([rec(.uploading, route: .local)]) == false, "a local upload is no dsh work")
+check(hasPendingDSHWork([rec(.done, route: .dsh, accepted: true)]) == false, "a done dsh session is no pending work")
+check(hasPendingDSHWork([rec(.failed, route: .dsh, accepted: true)]) == false, "a failed dsh session is no pending work")
+check(hasPendingDSHWork([rec(.discarded, route: .dsh)]) == false, "a discarded dsh session is no pending work")
+check(hasPendingDSHWork([rec(.uploading, route: .dsh, accepted: false)]) == true, "an unaccepted dsh upload is pending work")
+check(hasPendingDSHWork([rec(.transcribing, route: .dsh, accepted: true)]) == true, "an accepted dsh transcription is pending work")
+check(hasPendingDSHWork([rec(.awaitingAccount, route: .dsh, accepted: true)]) == true, "a dsh session awaiting an account is pending work")
+check(hasPendingDSHWork([rec(.logging, route: .dsh, accepted: true), rec(.uploading, route: .local)]) == true, "pending dsh work among local sessions")
+
 // Credential keys (D-08)
 check(requiredCredentialKeys(dshEnabled: true) == ["SF_USERNAME", "SF_PASSWORD", "SF_SECURITY_TOKEN", "SF_DOMAIN"], "DSH on needs only the four SF keys")
 check(requiredCredentialKeys(dshEnabled: false) == ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY", "SF_USERNAME", "SF_PASSWORD", "SF_SECURITY_TOKEN", "SF_DOMAIN"], "DSH off needs all six keys in the current order")
