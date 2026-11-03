@@ -43,6 +43,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     let updateChecker = UpdateChecker()
     var updateTimer: Timer?
     let backendSupervisor = BackendSupervisor()
+    /// Uploads and follows route dsh sessions (TRX-01). Main-thread only.
+    lazy var dshQueue: DSHQueue = {
+        let queue = DSHQueue()
+        queue.app = self
+        return queue
+    }()
 
     /// Set in applicationWillFinishLaunching when another copy is already running.
     var otherInstance: NSRunningApplication?
@@ -77,6 +83,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
         // Create recordings directory
         try? FileManager.default.createDirectory(atPath: recordingsDir, withIntermediateDirectories: true)
+
+        // Upload bodies left behind by a crash mid-upload hold a copy of a call (T-03-11).
+        DispatchQueue.global(qos: .utility).async { DSHClient.sweepStaleBodies() }
 
         // The recorder reports the end of every session here, on the main thread.
         recorder.onFinished = { [weak self] id, result in
@@ -455,6 +464,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                 self.backendSupervisor.reloadCredentials()
             }
         }
+        viewModel.dshClient = dshQueue.client
+        viewModel.onPairingChange = { [weak self] in
+            self?.dshQueue.reloadToken { self?.dshQueue.kick() }
+        }
         viewModel.onChannelChange = { [weak self] channel in
             guard let self = self else { return }
             self.updateChecker.checkForUpdate { [weak self] in
@@ -725,12 +738,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             debugLog("SessionStore: save failed for \(id): \(error.localizedDescription)")
         }
         scheduleSessionPolling()
+        dshQueue.schedulePolling()
     }
 
     /// Starts the 10 s session poller while any session waits on the backend, and stops it
     /// when none does. No polling when nothing is in flight.
     func scheduleSessionPolling() {
-        let inFlight = sessionStore.list().contains { polledStages.contains($0.stage) }
+        // Route dsh sessions share these stage names but are followed by the DSH queue.
+        let inFlight = sessionStore.list().contains { $0.route == .local && polledStages.contains($0.stage) }
         if inFlight {
             guard sessionPollTimer == nil else { return }
             sessionPollTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
@@ -747,7 +762,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     /// (01-09 resends on relaunch).
     func pollSessions() {
         guard !sessionPollInFlight else { return }
-        let records = sessionStore.list().filter { polledStages.contains($0.stage) }
+        let records = sessionStore.list().filter { $0.route == .local && polledStages.contains($0.stage) }
         guard !records.isEmpty else {
             scheduleSessionPolling()
             return
@@ -775,6 +790,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                     guard let self = self, let fetched = fetched,
                           let mapped = stageForBackend(stage: fetched.stage, step: fetched.step),
                           let current = self.sessionStore.load(record.id),
+                          current.route == .local,
                           self.polledStages.contains(current.stage) else { return }
                     // An NNO session only takes done or failed: it has no transcription or
                     // logging step, and the backend refuses a call/NNO kind mix with 409.
@@ -933,6 +949,44 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }
     }
 
+    // MARK: - Route Entry
+
+    /// The one entry for "Opslaan" in the save dialog and "Verwerken" in the manual window.
+    /// The route is chosen here once and stored on the session (D-09): local goes to the
+    /// existing POST /process path unchanged (D-10, TRX-07), dsh goes to the DSH queue,
+    /// which never calls POST /process or /log-nno for that session (TRX-04).
+    func submitSession(sessionID: UUID, audioPath: String, phoneNumber: String, contact: ContactInfo?, direction: String = "Outbound") {
+        guard let record = sessionStore.load(sessionID) else {
+            debugLog("submitSession: no record for \(sessionID)")
+            return
+        }
+        let route = chooseRoute(for: record, dshEnabled: readDSHEnabled(.standard))
+        debugLog("submitSession: \(sessionID) route \(route.rawValue)")
+        switch route {
+        case .local:
+            updateSession(sessionID) { $0.route = .local }
+            sendToBackend(sessionID: sessionID, audioPath: audioPath, phoneNumber: phoneNumber,
+                          contact: contact, direction: direction)
+        case .dsh:
+            // D-26: a session keeps the target (test or real routes) it was created with.
+            let useTestRoutes = record.dshAccepted ? record.dshTest : UserDefaults.standard.bool(forKey: dshUseTestRoutesDefaultsKey)
+            updateSession(sessionID) {
+                $0.route = .dsh
+                $0.dshTest = useTestRoutes
+                $0.stage = .uploading
+                $0.audioPath = audioPath
+                $0.contactID = contact?.id
+                $0.contactType = contact?.type
+                $0.contactName = contact?.name
+                $0.direction = direction
+                $0.error = nil
+            }
+            dshQueue.kick()
+            dshQueue.schedulePolling()
+            showNotification(title: "CallBridge", message: "Opname naar DSH gestuurd")
+        }
+    }
+
     // MARK: - Save Dialog
 
     func showSaveDialog(sessionID: UUID, phoneNumber: String, audioPath: String, contact: ContactInfo?) {
@@ -1032,6 +1086,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     func discardSession(_ sessionID: UUID, audioPath: String) {
         updateSession(sessionID) { $0.stage = .discarded }
         trashRecording(audioPath)
+    }
+
+    /// Moves only the session's own recording to the Trash, and only when it sits inside
+    /// recordingsDir and exists (D-19, T-03-15, Pitfall 10). Other files are never touched.
+    func trashOwnRecording(of record: SessionRecord) {
+        guard let path = record.audioPath else { return }
+        let dirPrefix = URL(fileURLWithPath: recordingsDir).standardizedFileURL.path + "/"
+        let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
+        guard standardized.hasPrefix(dirPrefix), FileManager.default.fileExists(atPath: standardized) else { return }
+        trashRecording(standardized)
     }
 
     /// Move a recording to the Trash (recoverable) instead of deleting it outright.
@@ -1224,15 +1288,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     /// The folder is never listed here, so recordings without a session record are never
     /// touched (Pitfall 10).
     func pruneOldSessions() {
-        let dirPrefix = URL(fileURLWithPath: recordingsDir).standardizedFileURL.path + "/"
         for record in sessionsToPrune(sessionStore.list(), now: Date()) {
-            if let path = record.audioPath {
-                let standardized = URL(fileURLWithPath: path).standardizedFileURL.path
-                if standardized.hasPrefix(dirPrefix) && FileManager.default.fileExists(atPath: standardized) {
-                    // D-03: succeeded and failed sessions alike; the Trash keeps it recoverable.
-                    trashRecording(standardized)
-                }
-            }
+            // D-03: succeeded and failed sessions alike; the Trash keeps it recoverable.
+            trashOwnRecording(of: record)
             sessionStore.delete(record.id)
         }
     }

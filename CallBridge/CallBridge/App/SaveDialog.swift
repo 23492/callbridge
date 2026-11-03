@@ -56,7 +56,7 @@ class SaveDialogViewModel: ObservableObject {
         guard !isSending, let appDelegate = appDelegate else { return }
         isSending = true
         appDelegate.dialogFinished(audioPath: audioPath)
-        appDelegate.sendToBackend(
+        appDelegate.submitSession(
             sessionID: sessionID,
             audioPath: audioPath,
             phoneNumber: phoneNumber,

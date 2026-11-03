@@ -20,6 +20,24 @@ class SettingsViewModel: ObservableObject {
         }
     }
 
+    /// D-06: "Transcriberen via DSH", saved immediately like the beta toggle.
+    @Published var dshEnabled: Bool = readDSHEnabled(.standard) {
+        didSet {
+            guard dshEnabled != oldValue else { return }
+            UserDefaults.standard.set(dshEnabled, forKey: dshEnabledDefaultsKey)
+            debugLog("Settings: DSH route \(dshEnabled ? "on" : "off")")
+        }
+    }
+    /// The one-time code from the cockpit. Never logged.
+    @Published var pairingCode: String = ""
+    @Published var isPaired: Bool = false
+    @Published var isPairing: Bool = false
+    @Published var pairingMessage: String = ""
+    /// Set by AppDelegate.showSettings: the DSH queue's client, for POST pair.
+    var dshClient: DSHClient?
+    /// Called after pairing or unpairing, so the DSH queue reloads its token.
+    var onPairingChange: (() -> Void)?
+
     @Published var assemblyAIKey: String = ""
     @Published var geminiKey: String = ""
     @Published var sfUsername: String = ""
@@ -37,6 +55,56 @@ class SettingsViewModel: ObservableObject {
         sfPassword      = KeychainHelper.read(key: "SF_PASSWORD") ?? ""
         sfSecurityToken = KeychainHelper.read(key: "SF_SECURITY_TOKEN") ?? ""
         sfDomain        = KeychainHelper.read(key: "SF_DOMAIN") ?? "welisa"
+        isPaired        = KeychainHelper.read(key: "DSH_CLIENT_TOKEN") != nil
+    }
+
+    /// Sends the pairing code once (POST pair) and stores the client token in the Keychain
+    /// under DSH_CLIENT_TOKEN (D-06). Neither the code nor the token reaches a log line.
+    func pair() {
+        let code = pairingCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty, !isPairing else { return }
+        guard let client = dshClient else {
+            pairingMessage = "DSH niet bereikbaar"
+            return
+        }
+        isPairing = true
+        pairingMessage = ""
+        client.pair(code: code) { [weak self] outcome in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isPairing = false
+                switch outcome {
+                case .success(let data):
+                    guard let answer = decodeCockpitData(CockpitPairAnswer.self, from: data), !answer.token.isEmpty else {
+                        self.pairingMessage = "DSH niet bereikbaar"
+                        return
+                    }
+                    KeychainHelper.save(key: "DSH_CLIENT_TOKEN", value: answer.token)
+                    self.pairingCode = ""
+                    self.isPaired = true
+                    self.pairingMessage = "Gekoppeld"
+                    debugLog("Settings: paired with DSH")
+                    self.onPairingChange?()
+                case .rejected(_, let message):
+                    self.pairingMessage = message
+                case .accessMissing:
+                    self.pairingMessage = "Log eerst in bij DSH (menu: Log in bij DSH)"
+                case .cloudflaredMissing:
+                    self.pairingMessage = "cloudflared ontbreekt: brew install cloudflared"
+                default:
+                    self.pairingMessage = "DSH niet bereikbaar"
+                }
+            }
+        }
+    }
+
+    /// Deletes only the local client token; the cockpit keeps its side (D-06).
+    func unpair() {
+        KeychainHelper.delete(key: "DSH_CLIENT_TOKEN")
+        isPaired = false
+        pairingMessage = ""
+        debugLog("Settings: DSH pairing removed")
+        onPairingChange?()
     }
 
     func validate() {
@@ -120,6 +188,27 @@ struct SettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             Form {
+                Section("DSH") {
+                    Toggle("Transcriberen via DSH", isOn: $viewModel.dshEnabled)
+                    Text(viewModel.isPaired ? "Gekoppeld" : "Niet gekoppeld")
+                        .foregroundColor(viewModel.isPaired ? .green : .secondary)
+                    TextField("Koppelcode", text: $viewModel.pairingCode)
+                    HStack {
+                        Button("Koppelen") { viewModel.pair() }
+                            .disabled(viewModel.isPairing ||
+                                      viewModel.pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if viewModel.isPaired {
+                            Button("Ontkoppelen") { viewModel.unpair() }
+                        }
+                    }
+                    if !viewModel.pairingMessage.isEmpty {
+                        Text(viewModel.pairingMessage)
+                            .font(.callout)
+                    }
+                    Text("Maak een koppelcode in de cockpit: Transcriberen, onderaan 'CallBridge', 'Koppelcode maken'.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
                 Section("API Keys") {
                     SecureField("AssemblyAI API key", text: $viewModel.assemblyAIKey)
                     SecureField("Gemini API key",     text: $viewModel.geminiKey)
@@ -174,7 +263,7 @@ struct SettingsView: View {
             }
             .padding()
         }
-        .frame(width: 480, height: 700)
+        .frame(width: 480, height: 860)
         .padding(.bottom)
     }
 }
