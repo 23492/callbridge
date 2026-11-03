@@ -32,6 +32,7 @@ final class DSHQueue {
                 notifiedPause = nil
                 unauthorizedToken = nil
             }
+            updateHealthTimer()
             onPauseChange?(pauseReason)
         }
     }
@@ -46,6 +47,10 @@ final class DSHQueue {
     private var loginCheckInFlight = false
     /// True while "Log in bij DSH" runs cloudflared access login; a second click adds nothing.
     private var loginRunning = false
+    /// GET health every 300 s, only while paused for unreachable or switchOff (D-11, D-21).
+    private var healthTimer: Timer?
+    private var healthInFlight = false
+    static let healthProbeInterval: TimeInterval = 300
     /// Called on the main queue whenever pauseReason changes.
     var onPauseChange: ((DSHPauseReason?) -> Void)?
 
@@ -128,6 +133,66 @@ final class DSHQueue {
                 self.pauseReason = nil
                 self.kick()
                 self.pollNow()
+            }
+        }
+    }
+
+    // MARK: - Health Probe
+
+    /// Runs the 300 s health timer only while the queue waits on the cockpit itself
+    /// (unreachable or switchOff) and stops it for every other state.
+    private func updateHealthTimer() {
+        let probing = pauseReason == .unreachable || pauseReason == .switchOff
+        if probing {
+            guard healthTimer == nil else { return }
+            healthTimer = Timer.scheduledTimer(withTimeInterval: DSHQueue.healthProbeInterval, repeats: true) { [weak self] _ in
+                self?.probeHealth()
+            }
+            debugLog("DSHQueue: health probe every \(Int(DSHQueue.healthProbeInterval)) s")
+        } else if let timer = healthTimer {
+            timer.invalidate()
+            healthTimer = nil
+        }
+    }
+
+    /// GET health while the cockpit is unreachable or switched off (D-11, D-21). A live
+    /// switch clears the pause and resumes; "off" keeps switchOff; other outcomes map
+    /// through pauseReason(for:). Without DSH work it clears those pauses and sends nothing.
+    /// On route dsh nothing ever falls back to the local route, whatever the answer (D-11).
+    func probeHealth() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let app = app else { return }
+        let records = app.sessionStore.list()
+        guard hasPendingDSHWork(records) else {
+            if pauseReason == .unreachable || pauseReason == .switchOff { pauseReason = nil }
+            healthTimer?.invalidate()
+            healthTimer = nil
+            return
+        }
+        guard !healthInFlight, tokenLoaded, let token = clientToken else { return }
+        // Ask the same target the waiting sessions use: test routes only when all of them do.
+        let pending = records.filter { $0.route == .dsh && !$0.stage.isTerminal }
+        let test = !pending.isEmpty && pending.allSatisfy { $0.dshTest }
+        healthInFlight = true
+        client.health(clientToken: token, test: test) { [weak self] outcome in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.healthInFlight = false
+                debugLog("DSHQueue: health -> \(DSHClient.caseName(outcome))")
+                switch outcome {
+                case .success(let data):
+                    let health = decodeCockpitData(CockpitHealth.self, from: data)
+                    if health?.switch == "off" {
+                        self.pauseReason = .switchOff
+                    } else if health?.switch == "live" {
+                        if self.pauseReason == .unreachable || self.pauseReason == .switchOff { self.pauseReason = nil }
+                        self.kick()
+                        self.pollNow()
+                    }
+                default:
+                    if outcome == .accessMissing { self.lastLoginCheck = Date() }
+                    self.setPause(for: outcome, token: token)
+                }
             }
         }
     }

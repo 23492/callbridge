@@ -406,6 +406,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                 let who = (record.contactName?.isEmpty == false) ? record.contactName! : record.phoneNumber
                 let sessionItem = NSMenuItem(title: "\(who) — \(formatter.string(from: record.createdAt))", action: nil, keyEquivalent: "")
                 let actions = NSMenu()
+                // D-14, D-22: the reason it failed (for DSH the cockpit's own Dutch message).
+                if let error = record.error, !error.isEmpty {
+                    let errorItem = NSMenuItem(title: error, action: nil, keyEquivalent: "")
+                    errorItem.isEnabled = false
+                    actions.addItem(errorItem)
+                    actions.addItem(NSMenuItem.separator())
+                }
                 let retryItem = NSMenuItem(title: "Opnieuw proberen", action: #selector(retryFailedSession(_:)), keyEquivalent: "")
                 retryItem.target = self
                 retryItem.representedObject = record.id.uuidString
@@ -485,6 +492,55 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             menu.addItem(item)
             menu.addItem(NSMenuItem.separator())
         }
+
+        // D-22: what is queued and what waits on an account, from the session store only.
+        let records = sessionStore.list()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "dd-MM HH:mm"
+        func who(_ record: SessionRecord) -> String {
+            (record.contactName?.isEmpty == false) ? record.contactName! : record.phoneNumber
+        }
+        var added = false
+
+        let queued = records
+            .filter { $0.route == .dsh && [SessionStage.uploading, .transcribing, .logging].contains($0.stage) }
+            .sorted { $0.createdAt > $1.createdAt }
+        if !queued.isEmpty {
+            let queueItem = NSMenuItem(title: "Wachtrij (\(queued.count))", action: nil, keyEquivalent: "")
+            let queueMenu = NSMenu()
+            for record in queued {
+                let label = record.dshAccepted
+                    ? cockpitStepLabel(status: record.cockpitStep ?? "uploading", step: record.cockpitStep)
+                    : "Wacht op verzending"
+                let item = NSMenuItem(title: "\(who(record)) — \(label)", action: nil, keyEquivalent: "")
+                item.isEnabled = false
+                queueMenu.addItem(item)
+            }
+            queueItem.submenu = queueMenu
+            menu.addItem(queueItem)
+            added = true
+        }
+
+        let awaiting = records
+            .filter { $0.route == .dsh && $0.stage == .awaitingAccount }
+            .sorted { $0.createdAt > $1.createdAt }
+        if !awaiting.isEmpty {
+            let awaitItem = NSMenuItem(title: "Wacht op account (\(awaiting.count))", action: nil, keyEquivalent: "")
+            let awaitMenu = NSMenu()
+            for record in awaiting {
+                // Opens Transcriberen in the cockpit, where Kiran links the account.
+                let item = NSMenuItem(title: "\(who(record)) — \(formatter.string(from: record.createdAt))",
+                                      action: #selector(openURL(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = URL(string: dshCockpitURL)
+                awaitMenu.addItem(item)
+            }
+            awaitItem.submenu = awaitMenu
+            menu.addItem(awaitItem)
+            added = true
+        }
+
+        if added { menu.addItem(NSMenuItem.separator()) }
     }
 
     /// "Log in bij DSH": cloudflared access login, then the queue resumes by itself (D-05).
@@ -508,6 +564,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
     /// "DSH niet bereikbaar" / "DSH staat uit in de cockpit": try now instead of waiting.
     @objc func dshRetryNow() {
+        dshQueue.probeHealth()
         dshQueue.kick()
         dshQueue.pollNow()
     }
