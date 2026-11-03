@@ -1348,6 +1348,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         let now = Date()
         var toReattach: [SessionRecord] = []
         var awaitingDialog: [SessionRecord] = []
+        var dshResumes: [UUID] = []
         for record in sessionStore.list() {
             switch resumeAction(for: record, now: now) {
             case .resendProcess, .resendNNO:
@@ -1365,8 +1366,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                     $0.error = reason
                 }
             case .resumeDSH:
-                // Route dsh: resumed by the DSH queue (03-05), never through pendingResumes or POST /process (D-09).
-                break
+                // Route dsh: resumed by the DSH queue, never through pendingResumes or
+                // POST /process, so a dead local backend does not hold it (D-09, Pitfall 4).
+                dshResumes.append(record.id)
             case .none:
                 break
             }
@@ -1404,6 +1406,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         // Follow sessions that were still running on the backend when the app quit.
         scheduleSessionPolling()
 
+        // Route dsh sessions go straight back to the DSH queue once the token is loaded.
+        // Also runs with an empty list: the launch kick re-checks the pause causes.
+        dshQueue.reloadToken { [weak self] in
+            self?.dshQueue.resumeOnLaunch(dshResumes)
+        }
+
         pruneOldSessions()
     }
 
@@ -1420,12 +1428,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     }
 
     /// "Mislukt (n)" → "Opnieuw proberen": resend with the same session id, so the backend
-    /// ledger resumes where it stopped instead of writing twice.
+    /// ledger resumes where it stopped instead of writing twice. A route dsh session goes
+    /// to the DSH queue instead (D-09, D-12, D-17, D-17b), never to POST /process.
     @objc func retryFailedSession(_ sender: NSMenuItem) {
         guard let idString = sender.representedObject as? String, let id = UUID(uuidString: idString),
               let record = sessionStore.load(id) else { return }
         guard let path = record.audioPath, FileManager.default.fileExists(atPath: path) else {
             showNotification(title: "CallBridge", message: "Opname niet gevonden")
+            return
+        }
+        if record.route == .dsh {
+            dshQueue.retry(id)
+            rebuildMenu()
             return
         }
         let target = retryStage(for: record)

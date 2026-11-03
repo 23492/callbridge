@@ -437,6 +437,158 @@ final class DSHQueue {
         }
     }
 
+    // MARK: - Resume and Retry
+
+    /// D-09, Pitfall 4: route dsh sessions found on launch resume here, never through
+    /// pendingResumes or POST /process. Accepted ones are only polled (GET finds their
+    /// state; a 404 re-uploads with the same client_ref, D-17b); unaccepted ones lose
+    /// their backoff wait and go out at once.
+    func resumeOnLaunch(_ ids: [UUID]) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let app = app else { return }
+        for id in ids {
+            guard let record = app.sessionStore.load(id), record.route == .dsh, !record.dshAccepted else { continue }
+            app.updateSession(id) { $0.nextAttemptAt = nil }
+        }
+        debugLog("DSHQueue: resume \(ids.count) session(s) on launch")
+        kick()
+        schedulePolling()
+        pollNow()
+    }
+
+    /// "Opnieuw proberen" on a failed route dsh session (D-12, D-17, D-17b, D-26).
+    /// A session the cockpit never accepted follows the toggle at this moment through
+    /// submitSession. An accepted one stays on DSH: GET calls/<client_ref> decides, a
+    /// failed record gets POST retry, a 404 re-uploads with the same client_ref and a 409
+    /// on retry means it is already moving, so GET again.
+    func retry(_ id: UUID) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let app = app, let record = app.sessionStore.load(id) else { return }
+        guard record.stage == .failed else {
+            // A stale session listed under "Mislukt" that is still waiting: ask now.
+            kick()
+            pollNow()
+            return
+        }
+        notifiedFailures.remove(id)
+        guard record.dshAccepted else {
+            guard let path = record.audioPath else { return }
+            var contact: ContactInfo?
+            if record.contactID != nil || record.contactName != nil {
+                contact = ContactInfo(id: record.contactID, name: record.contactName ?? "", type: record.contactType ?? "Contact",
+                                      phone: nil, account_name: nil, account_id: nil)
+            }
+            app.updateSession(id) {
+                $0.attempts = 0
+                $0.nextAttemptAt = nil
+            }
+            app.submitSession(sessionID: id, audioPath: path, phoneNumber: record.phoneNumber,
+                              contact: contact, direction: record.direction ?? "Outbound")
+            return
+        }
+        guard tokenLoaded else {
+            reloadToken { [weak self] in self?.retry(id) }
+            return
+        }
+        guard let token = clientToken else {
+            pauseReason = .needsPairing
+            return
+        }
+        debugLog("DSHQueue: retry \(id), asking the cockpit first")
+        client.call(clientRef: id.uuidString, clientToken: token, test: record.dshTest) { [weak self] outcome in
+            DispatchQueue.main.async { self?.handleRetryLookup(outcome, for: id, token: token) }
+        }
+    }
+
+    /// The GET answer before a retry: failed -> POST retry, anything else is applied as is.
+    private func handleRetryLookup(_ outcome: DSHOutcome, for id: UUID, token: String) {
+        guard let app = app, let current = app.sessionStore.load(id),
+              current.route == .dsh, current.stage == .failed else { return }
+        debugLog("DSHQueue: retry lookup \(id) -> \(DSHClient.caseName(outcome))")
+        switch outcome {
+        case .success(let data):
+            pauseReason = nil
+            guard let call = decodeCockpitData(CockpitCall.self, from: data) else { return }
+            if call.status == "failed" {
+                client.retry(clientRef: id.uuidString, clientToken: token, test: current.dshTest) { [weak self] answer in
+                    DispatchQueue.main.async { self?.handleRetryAnswer(answer, for: id, token: token) }
+                }
+            } else {
+                reopen(id, with: call)
+            }
+        case .notFound:
+            reupload(id)
+        case .rejected(_, let message):
+            app.showNotification(title: "CallBridge", message: "Fout: \(message) (opname bewaard)")
+        case .conflict:
+            break
+        case .accessMissing, .unauthorized, .cloudflaredMissing, .switchOff, .retryable:
+            if outcome == .accessMissing { lastLoginCheck = Date() }
+            setPause(for: outcome, token: token)
+            let title = queuePauseReason(for: outcome)?.menuTitle ?? "DSH niet bereikbaar"
+            app.showNotification(title: "CallBridge", message: "Opnieuw proberen lukt nu niet: \(title)")
+        }
+    }
+
+    /// The POST retry answer. A 409 conflict means the record already moves on, so it is
+    /// asked once more with GET and applied (D-26 note).
+    private func handleRetryAnswer(_ outcome: DSHOutcome, for id: UUID, token: String) {
+        guard let app = app, let current = app.sessionStore.load(id),
+              current.route == .dsh, current.stage == .failed else { return }
+        debugLog("DSHQueue: retry \(id) -> \(DSHClient.caseName(outcome))")
+        switch outcome {
+        case .success(let data):
+            pauseReason = nil
+            if let call = decodeCockpitData(CockpitCall.self, from: data) {
+                reopen(id, with: call)
+            }
+        case .conflict:
+            client.call(clientRef: id.uuidString, clientToken: token, test: current.dshTest) { [weak self] answer in
+                DispatchQueue.main.async {
+                    guard let self = self, case .success(let data) = answer,
+                          let call = decodeCockpitData(CockpitCall.self, from: data) else { return }
+                    self.reopen(id, with: call)
+                }
+            }
+        case .notFound:
+            reupload(id)
+        case .rejected(_, let message):
+            app.showNotification(title: "CallBridge", message: "Fout: \(message) (opname bewaard)")
+        case .accessMissing, .unauthorized, .cloudflaredMissing, .switchOff, .retryable:
+            if outcome == .accessMissing { lastLoginCheck = Date() }
+            setPause(for: outcome, token: token)
+            let title = queuePauseReason(for: outcome)?.menuTitle ?? "DSH niet bereikbaar"
+            app.showNotification(title: "CallBridge", message: "Opnieuw proberen lukt nu niet: \(title)")
+        }
+    }
+
+    /// Moves a failed session back into a polled stage, then applies the cockpit record
+    /// (apply ignores terminal sessions). canTransition allows failed -> transcribing and
+    /// every stage apply can map to from there.
+    private func reopen(_ id: UUID, with call: CockpitCall) {
+        guard let app = app else { return }
+        app.updateSession(id) {
+            $0.stage = .transcribing
+            $0.error = nil
+        }
+        apply(call, to: id)
+        schedulePolling()
+    }
+
+    /// D-17b: the cockpit does not know the client_ref; upload again with the same one.
+    private func reupload(_ id: UUID) {
+        guard let app = app else { return }
+        debugLog("DSHQueue: retry \(id) -> unknown to the cockpit, re-uploading")
+        app.updateSession(id) {
+            $0.dshAccepted = false
+            $0.stage = .uploading
+            $0.error = nil
+            $0.attempts = 0
+            $0.nextAttemptAt = nil
+        }
+        kick()
+    }
+
     // MARK: - Polling
 
     /// D-18: 15 s while an accepted session is uploading, transcribing or logging, 300 s
