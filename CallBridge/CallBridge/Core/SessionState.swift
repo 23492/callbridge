@@ -134,6 +134,11 @@ struct SessionRecord: Codable, Equatable {
 /// Whether a session may move from one stage to another. A same-stage write (a new step,
 /// attempts += 1) is allowed for every non-terminal stage; terminal stages only leave
 /// through a retry of a failed session.
+/// DSH route pairs: awaitingDecision->failed is the D-15 preflight; transcribing/logging->
+/// uploading is the D-17b re-upload after a 404; failed->transcribing is a cockpit POST retry;
+/// awaitingAccount->transcribing/logging is the cockpit moving on once Kiran links the account;
+/// failed->logging/awaitingAccount is a retry answer that is already further along. Together
+/// they make every stage stageForCockpit returns reachable from every stage it is applied to.
 func canTransition(from: SessionStage, to: SessionStage) -> Bool {
     if from == to && !from.isTerminal { return true }
     switch (from, to) {
@@ -143,7 +148,14 @@ func canTransition(from: SessionStage, to: SessionStage) -> Bool {
          (.transcribing, .logging), (.transcribing, .done), (.transcribing, .failed),
          (.logging, .done), (.logging, .failed),
          (.loggingNNO, .done), (.loggingNNO, .failed),
-         (.failed, .uploading), (.failed, .loggingNNO):
+         (.failed, .uploading), (.failed, .loggingNNO),
+         (.awaitingDecision, .failed),
+         (.uploading, .awaitingAccount), (.transcribing, .awaitingAccount), (.logging, .awaitingAccount),
+         (.awaitingAccount, .done), (.awaitingAccount, .failed),
+         (.uploading, .logging), (.transcribing, .uploading), (.logging, .uploading),
+         (.failed, .transcribing),
+         (.awaitingAccount, .transcribing), (.awaitingAccount, .logging),
+         (.failed, .logging), (.failed, .awaitingAccount):
         return true
     default:
         return false
@@ -166,11 +178,14 @@ enum ResumeAction: Equatable {
     case resendProcess
     /// D-01: resend POST /log-nno with the same client_ref, no dialog.
     case resendNNO
+    /// D-09: a DSH session resumes through the DSH queue (poll, or re-upload with the same client_ref), never through POST /process.
+    case resumeDSH
     /// The caller moves the record to discarded with this error and keeps any audio file.
     case abandon(String)
 }
 
 /// D-01 and D-02: every non-terminal session resumes automatically on launch.
+/// D-09: route dsh sessions resume through the DSH queue, never through POST /process.
 /// Time is a parameter so the rule is testable.
 func resumeAction(for record: SessionRecord, now: Date) -> ResumeAction {
     switch record.stage {
@@ -180,9 +195,13 @@ func resumeAction(for record: SessionRecord, now: Date) -> ResumeAction {
         if now.timeIntervalSince(info.startTime) > maxRecordingDuration { return .abandon("timeout") }
         return .reattachRecorder
     case .awaitingDecision: return .showSaveDialog
-    case .uploading, .transcribing, .logging: return .resendProcess
+    case .uploading, .transcribing, .logging:
+        return record.route == .dsh ? .resumeDSH : .resendProcess
+    case .awaitingAccount:
+        // Only the DSH route reaches awaitingAccount.
+        return record.route == .dsh ? .resumeDSH : .none
     case .loggingNNO: return .resendNNO
-    case .done, .failed, .discarded, .awaitingAccount: return .none
+    case .done, .failed, .discarded: return .none
     }
 }
 
@@ -254,11 +273,16 @@ func sessionsToPrune(_ records: [SessionRecord], now: Date,
     records.filter { $0.stage.isTerminal && now.timeIntervalSince($0.updatedAt) >= retention }
 }
 
-/// Non-terminal sessions (other than recording, which resumeAction handles) that have not
-/// moved for `retention`. They are surfaced under "Mislukt" and never deleted automatically.
+/// Non-terminal sessions that have not moved for `retention`. They are surfaced under
+/// "Mislukt" and never deleted automatically. Left out: recording (resumeAction handles it),
+/// awaitingAccount (D-20: waits for Kiran to link the account, however long that takes) and
+/// route dsh uploads the cockpit has not accepted yet (queued behind a pause, shown under
+/// "Wachtrij").
 func staleNonTerminal(_ records: [SessionRecord], now: Date,
                       retention: TimeInterval = sessionRetention) -> [SessionRecord] {
     records.filter {
-        !$0.stage.isTerminal && $0.stage != .recording && now.timeIntervalSince($0.updatedAt) >= retention
+        if $0.stage.isTerminal || $0.stage == .recording || $0.stage == .awaitingAccount { return false }
+        if $0.route == .dsh && $0.stage == .uploading && !$0.dshAccepted { return false }
+        return now.timeIntervalSince($0.updatedAt) >= retention
     }
 }

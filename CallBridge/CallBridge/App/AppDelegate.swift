@@ -1176,6 +1176,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                     $0.stage = .discarded
                     $0.error = reason
                 }
+            case .resumeDSH:
+                // Route dsh: resumed by the DSH queue (03-05), never through pendingResumes or POST /process (D-09).
+                break
             case .none:
                 break
             }

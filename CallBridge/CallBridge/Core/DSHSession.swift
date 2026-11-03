@@ -38,3 +38,59 @@ func stageForCockpit(status: String, step: String?, taskId: String?) -> SessionS
 func shouldTrashRecording(status: String, taskId: String?) -> Bool {
     (status == "done" || status == "duplicate") && hasValue(taskId)
 }
+
+/// D-16: the Dutch menu label for a cockpit status and step. Unknown input reads "Bezig".
+func cockpitStepLabel(status: String, step: String?) -> String {
+    if step == "waiting_for_account" { return "Wacht op account" }
+    switch status {
+    case "uploading": return "Uploaden"
+    case "transcribing": return "Transcriberen"
+    case "summarizing": return "Samenvatten"
+    case "writing": return "Salesforce bijwerken"
+    default: return "Bezig"
+    }
+}
+
+// MARK: - DSH Poll Interval
+
+/// D-18: poll interval while an accepted DSH session is uploading, transcribing or logging.
+let dshFastPollInterval: TimeInterval = 15
+/// D-18: poll interval when the only accepted DSH sessions left wait for an account.
+let dshSlowPollInterval: TimeInterval = 300
+
+/// D-18: how often the DSH queue polls the cockpit, or nil when no accepted DSH session
+/// needs polling. Unaccepted sessions are handled by the upload queue, not the poller.
+func dshPollInterval(_ records: [SessionRecord]) -> TimeInterval? {
+    let accepted = records.filter { $0.route == .dsh && $0.dshAccepted }
+    if accepted.contains(where: { [SessionStage.uploading, .transcribing, .logging].contains($0.stage) }) {
+        return dshFastPollInterval
+    }
+    if accepted.contains(where: { $0.stage == .awaitingAccount }) { return dshSlowPollInterval }
+    return nil
+}
+
+// MARK: - DSH Settings
+
+/// D-06: UserDefaults key of the "Transcriberen via DSH" toggle (default on).
+let dshEnabledDefaultsKey = "dshEnabled"
+/// D-26: hidden debug setting that sends sessions to the cockpit test routes.
+let dshUseTestRoutesDefaultsKey = "dshUseTestRoutes"
+/// D-26: hidden debug setting naming the cockpit test scenario to run.
+let dshTestScenarioDefaultsKey = "dshTestScenario"
+
+/// D-06: the "Transcriberen via DSH" toggle; true when the key was never set.
+func readDSHEnabled(_ defaults: UserDefaults) -> Bool {
+    guard defaults.object(forKey: dshEnabledDefaultsKey) != nil else { return true }
+    return defaults.bool(forKey: dshEnabledDefaultsKey)
+}
+
+/// D-08: the Keychain keys the credential gate requires. With DSH on, transcription and
+/// summary run in the cockpit, so the AssemblyAI and Gemini keys are not needed.
+func requiredCredentialKeys(dshEnabled: Bool) -> [String] {
+    let salesforce = ["SF_USERNAME", "SF_PASSWORD", "SF_SECURITY_TOKEN", "SF_DOMAIN"]
+    return dshEnabled ? salesforce : ["ASSEMBLYAI_API_KEY", "GEMINI_API_KEY"] + salesforce
+}
+
+/// D-22: the "Wacht op account" items open the cockpit so Kiran can link the account
+/// in Transcriberen.
+let dshCockpitURL = "https://dsh2.knoppsmart.com/cockpit/"
