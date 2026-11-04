@@ -87,6 +87,11 @@ check(reusableSession(forAudioPath: "/rec/a.mp3", in: [older, newer])?.id == new
 check(reusableSession(forAudioPath: "/rec/a.mp3", in: [rec(.done, audio: "/rec/a.mp3")]) == nil, "reusableSession ignores a done record")
 check(reusableSession(forAudioPath: "/rec/a.mp3", in: [rec(.discarded, audio: "/rec/a.mp3")]) == nil, "reusableSession ignores a discarded record")
 check(reusableSession(forAudioPath: "/rec/b.mp3", in: [older, newer]) == nil, "reusableSession needs the same audioPath")
+var acceptedByCockpit = rec(.awaitingAccount, created: -50, audio: "/rec/a.mp3")
+acceptedByCockpit.route = .dsh
+acceptedByCockpit.dshAccepted = true
+check(reusableSession(forAudioPath: "/rec/a.mp3", in: [acceptedByCockpit]) == nil, "reusableSession never reuses a session the cockpit accepted (D-12)")
+check(reusableSession(forAudioPath: "/rec/a.mp3", in: [newer, acceptedByCockpit])?.id == newer.id, "reusableSession skips the accepted one and takes the open local one")
 
 // Backend stage mapping (GET /sessions/{client_ref})
 check(stageForBackend(stage: "unknown", step: nil) == nil, "backend unknown -> nil")

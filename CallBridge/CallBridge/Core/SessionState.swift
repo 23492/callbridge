@@ -228,7 +228,10 @@ func failedSessions(_ records: [SessionRecord]) -> [SessionRecord] {
 /// check decide (same target blocked, other target allowed).
 func reusableSession(forAudioPath path: String, in records: [SessionRecord]) -> SessionRecord? {
     records
-        .filter { $0.audioPath == path && $0.stage != .done && $0.stage != .discarded }
+        // A session the cockpit accepted belongs to the cockpit (D-12): reusing it would resend
+        // its client_ref with another contact, which the cockpit answers with the old record
+        // while the menu shows the new name. A new save of that file gets a new session.
+        .filter { $0.audioPath == path && $0.stage != .done && $0.stage != .discarded && !$0.dshAccepted }
         .max { $0.createdAt < $1.createdAt }
 }
 
