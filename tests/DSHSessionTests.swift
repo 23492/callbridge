@@ -91,6 +91,8 @@ if let suite = UserDefaults(suiteName: suiteName) {
 } else {
     check(false, "UserDefaults(suiteName:) returned nil")
 }
+check(keepsRecordingWhenDone(dshTest: true), "test route done keeps the recording")
+check(!keepsRecordingWhenDone(dshTest: false), "real route done trashes the recording")
 check(dshCockpitURL == "https://dsh2.knoppsmart.com/cockpit/", "cockpit URL")
 
 print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")

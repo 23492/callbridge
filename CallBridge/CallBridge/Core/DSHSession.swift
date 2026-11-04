@@ -39,6 +39,10 @@ func shouldTrashRecording(status: String, taskId: String?) -> Bool {
     (status == "done" || status == "duplicate") && hasValue(taskId)
 }
 
+/// D-26: a test route reports done with a fake 00T_TEST task id and writes nothing to
+/// Salesforce, so a recording used for a test run is never moved to the Trash.
+func keepsRecordingWhenDone(dshTest: Bool) -> Bool { dshTest }
+
 /// D-16: the Dutch menu label for a cockpit status and step. Unknown input reads "Bezig".
 func cockpitStepLabel(status: String, step: String?) -> String {
     if step == "waiting_for_account" { return "Wacht op account" }

@@ -427,10 +427,16 @@ final class DSHQueue {
             }
         }
         if trash, let record = app.sessionStore.load(id) {
-            app.trashOwnRecording(of: record)
+            // D-26: a test route "done" logged nothing in Salesforce, so the real recording
+            // used for the test must stay where it is.
+            if keepsRecordingWhenDone(dshTest: record.dshTest) {
+                debugLog("DSHQueue: \(id) done on a test route, recording kept")
+            } else {
+                app.trashOwnRecording(of: record)
+                debugLog("DSHQueue: \(id) done, recording to the Trash")
+            }
             app.updateSession(id) { $0.stage = .done }
             lastSlowPoll[id] = nil
-            debugLog("DSHQueue: \(id) done, recording to the Trash")
         } else if mapped == .failed {
             // D-23: the cockpit's error, once per session.
             notifyFailureOnce(id, message: app.sessionStore.load(id)?.error ?? "Verwerking in DSH mislukt")
