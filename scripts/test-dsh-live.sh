@@ -2,7 +2,7 @@
 # Live contract test of the CallBridge DSH client against the cockpit test routes
 # (D-26). Compiles CallBridge/CallBridge/Core/*.swift, Infra/Cloudflared.swift,
 # Infra/DSHClient.swift and tests/live/DSHLive.swift into one binary and runs it.
-# Mac only: needs cloudflared, a `cloudflared access login https://dsh2.knoppsmart.com`
+# Mac only: needs cloudflared, a `cloudflared access login https://dsh2.knoppsmart.com/cockpit/api/callbridge/v1/health`
 # and a paired client token in DSH_CLIENT_TOKEN. It only calls test/ routes, which never
 # reach Salesforce, AssemblyAI or an agent. The token reaches the binary only through the
 # inherited environment, never as an argument, and is never printed.

@@ -157,7 +157,10 @@ private let dshBadResponse = DSHOutcome.rejected(code: "bad_response", message: 
 // MARK: - Routes
 
 /// The Cloudflare Access application; `cloudflared access token -app=` takes this URL.
-let dshAccessApp = "https://dsh2.knoppsmart.com"
+/// dsh2 has a separate Access application for the CallBridge API path (aud 1576035d...),
+/// apart from the one on the site root. A token for the root URL is answered with a 302
+/// on these routes, so the token must be fetched for a URL under the API path.
+let dshAccessApp = "https://dsh2.knoppsmart.com/cockpit/api/callbridge/v1/health"
 /// Base of every CallBridge route; paths from dshRoutePath are relative to it.
 let dshAPIBase = "https://dsh2.knoppsmart.com/cockpit/api/callbridge/v1/"
 

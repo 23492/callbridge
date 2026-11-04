@@ -77,7 +77,10 @@ check(dshRoutePath(.health, test: false) == "health", "health real")
 check(dshRoutePath(.health, test: true) == "test/health", "health test")
 check(dshRoutePath(.echo, test: false) == "test/echo" && dshRoutePath(.echo, test: true) == "test/echo", "echo is always test/echo")
 check(dshRoutePath(.pair, test: false) == "pair" && dshRoutePath(.pair, test: true) == "pair", "pair is always pair")
-check(dshAPIBase.hasPrefix(dshAccessApp) && dshAPIBase.hasSuffix("/cockpit/api/callbridge/v1/"), "API base sits under the Access app")
+check(dshAPIBase.hasSuffix("/cockpit/api/callbridge/v1/"), "API base is the callbridge v1 path")
+// The Access token must come from the API path's own Access application, not the site root.
+check(dshAccessApp.hasPrefix(dshAPIBase), "Access app URL lies under the API base")
+check(cloudflaredLoginCommand == "cloudflared access login " + dshAccessApp, "login uses the same Access app URL")
 
 // Record decodes
 func call(_ data: String) -> CockpitCall? {

@@ -47,7 +47,7 @@ func resolveCloudflared(candidates: [String], isExecutable: (String) -> Bool) ->
 }
 
 /// Menu item "Log in bij DSH" runs this once; it opens the browser sign-in.
-let cloudflaredLoginCommand = "cloudflared access login https://dsh2.knoppsmart.com"
+let cloudflaredLoginCommand = "cloudflared access login " + dshAccessApp
 /// Menu item "cloudflared ontbreekt" offers this install command.
 let cloudflaredInstallCommand = "brew install cloudflared"
 /// How long a fetched Access token is reused before cloudflared runs again (D-05).
