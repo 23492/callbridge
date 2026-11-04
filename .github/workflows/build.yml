@@ -1,10 +1,10 @@
 name: Build
 
-# Compile check on every push to beta and on pull requests: the app only builds
+# Compile check on every push to the cockpit line and on pull requests: the app only builds
 # on macOS (Cocoa/SwiftUI), so this is the only place the full source is type-checked.
 on:
   push:
-    branches: [beta]
+    branches: [cockpit, cockpit-beta]
   pull_request:
 
 jobs:

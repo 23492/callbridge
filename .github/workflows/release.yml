@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version: 2.0.1 from main (stable) or 2.1.0-beta.1 from beta"
+        description: "Cockpit line: 3.0.0 from cockpit (stable) or 3.0.0-beta.1 from cockpit-beta"
         required: true
 
 permissions:
@@ -19,10 +19,11 @@ concurrency: release
 
 jobs:
   release:
-    # Stable releases only from main, beta releases only from beta.
+    # Cockpit line: stable releases only from cockpit, beta releases only from cockpit-beta.
+    # The classic line releases from main and beta with its own copy of this workflow.
     if: >-
-      (github.ref == 'refs/heads/main' && !contains(inputs.version, '-beta.')) ||
-      (github.ref == 'refs/heads/beta' && contains(inputs.version, '-beta.'))
+      (github.ref == 'refs/heads/cockpit' && !contains(inputs.version, '-beta.')) ||
+      (github.ref == 'refs/heads/cockpit-beta' && contains(inputs.version, '-beta.'))
     runs-on: macos-latest
     env:
       VERSION: ${{ inputs.version }}
@@ -30,7 +31,12 @@ jobs:
       - name: Validate version
         run: |
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
-            echo "::error::Invalid version '$VERSION' (expected 2.0.1 or 2.1.0-beta.1)"
+            echo "::error::Invalid version '$VERSION' (expected 3.0.0 or 3.0.0-beta.1)"
+            exit 1
+          fi
+          # The cockpit line is 3.x; 2.x tags belong to the classic line on main.
+          if [[ "$VERSION" != 3.* ]]; then
+            echo "::error::Cockpit releases are 3.x; 2.x is the classic line (main/beta)"
             exit 1
           fi
 
@@ -46,10 +52,10 @@ jobs:
           chmod +x build-release.sh
           ./build-release.sh "$VERSION"
 
-      # Ordering matters: installed copies follow callbridge-update.json on main.
+      # Ordering matters: installed copies follow callbridge-update.json on this branch.
       # We push the version bump first, create the release pointing at that
       # commit, and only then push the manifest. If the release step fails,
-      # the manifest on main still points at the previous (existing) release.
+      # the manifest on this branch still points at the previous (existing) release.
       - name: Commit + push version bump
         run: |
           git config user.name "github-actions[bot]"

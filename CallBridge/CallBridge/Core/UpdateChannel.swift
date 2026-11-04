@@ -2,8 +2,14 @@ import Foundation
 
 // MARK: - Update Channel
 
-/// Which manifest the updater follows. Stable reads callbridge-update.json on main,
-/// beta reads the copy on the beta branch. Stored per user in UserDefaults.
+/// Release branches of the cockpit line (3.x). The classic line (2.0.x) lives on main and beta.
+let updateStableBranch = "cockpit"
+let updateBetaBranch = "cockpit-beta"
+
+/// Which manifest the updater follows. This is the cockpit line: stable reads
+/// callbridge-update.json on the cockpit branch, beta reads the copy on cockpit-beta.
+/// The classic line (main and beta) has its own manifests, so neither line ever offers
+/// the other's builds. Stored per user in UserDefaults.
 enum UpdateChannel: String {
     case stable
     case beta
@@ -20,7 +26,7 @@ enum UpdateChannel: String {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
     }
 
-    var branch: String { self == .stable ? "main" : "beta" }
+    var branch: String { self == .stable ? updateStableBranch : updateBetaBranch }
 
     var manifestURL: String {
         "https://raw.githubusercontent.com/23492/callbridge/\(branch)/callbridge-update.json"

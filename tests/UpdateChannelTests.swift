@@ -68,8 +68,8 @@ UserDefaults.standard.removeObject(forKey: UpdateChannel.defaultsKey)
 check(UpdateChannel.current == UpdateChannel(rawValue: appBuildChannel), "default channel = build channel")
 UpdateChannel.current = .beta
 check(UpdateChannel.current == .beta, "stored choice wins")
-check(UpdateChannel.beta.manifestURL.hasSuffix("/callbridge/beta/callbridge-update.json"), "beta manifest URL")
-check(UpdateChannel.stable.manifestURL.hasSuffix("/callbridge/main/callbridge-update.json"), "stable manifest URL")
+check(UpdateChannel.beta.manifestURL.hasSuffix("/callbridge/cockpit-beta/callbridge-update.json"), "beta manifest URL on cockpit-beta")
+check(UpdateChannel.stable.manifestURL.hasSuffix("/callbridge/cockpit/callbridge-update.json"), "stable manifest URL on cockpit")
 UserDefaults.standard.removeObject(forKey: UpdateChannel.defaultsKey)
 
 print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED")
