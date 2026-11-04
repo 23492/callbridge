@@ -159,12 +159,14 @@ func runScenarios() {
     let sDone = record(poll(sRef) { $0.status == "done" || $0.status == "failed" })
     check(sDone?.status == "done", "salesforce_503: reaches done after retry")
 
-    // duplicate: answered at once, no task id, stays polled (D-16b).
+    // duplicate: answered at once. With the earlier call's task id it counts as done (D-16);
+    // without one it stays polled through duplicateOf (D-16b). The test route sends a task id.
     let dUp = record(upload(scenario: "duplicate"))
     check(dUp?.status == "duplicate", "duplicate: upload success with status duplicate")
     check(dUp?.duplicateOf?.isEmpty == false, "duplicate: duplicateOf set")
-    check(dUp != nil && stage(dUp) == nil,
-          "duplicate: stageForCockpit nil")
+    let dupHasTask = !(dUp?.taskId ?? "").isEmpty
+    check(dUp != nil && stage(dUp) == (dupHasTask ? .done : nil),
+          dupHasTask ? "duplicate with taskId: stageForCockpit done" : "duplicate without taskId: stageForCockpit nil")
 
     // too_large and bad_type: refused with the cockpit's own message.
     let tooLarge = isRejected(upload(scenario: "too_large"), code: "too_large")
