@@ -11,6 +11,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     let recordingsDir = NSHomeDirectory() + "/Auto Logger Recordings"
 
     var statusItem: NSStatusItem!
+    /// Remote UAT hook, only with CALLBRIDGE_DEBUG_CONTROL=1.
+    var debugControl: DebugControl?
     var state: CallState = .idle
     /// Captures calls. AppDelegate only talks to the Recorder protocol (FND-03).
     lazy var recorder: Recorder = AudioHijackRecorder(recordingsDir: recordingsDir)
@@ -131,6 +133,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
         // Resume every unfinished session at the stage where it stopped (FND-04, D-01, D-02).
         resumeSessionsOnLaunch()
+
+        if DebugControl.enabled {
+            debugControl = DebugControl(app: self)
+            debugControl?.start()
+        }
 
         // Update check (the repo is public, so the manifest is reachable). This only
         // surfaces "⬆ Update naar vX" in the menu when a NEWER signed version exists;
